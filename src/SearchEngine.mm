@@ -574,19 +574,30 @@
         NSArray<NSString *> *lines = [content componentsSeparatedByString:@"\n"];
         NPPFileResults *fileRes = nil;
 
+        NSRegularExpression *re = nil;
+
+        if (opts.searchType == NPPSearchRegex) {
+            NSRegularExpressionOptions reOpts = 0;
+            if (!opts.matchCase) reOpts |= NSRegularExpressionCaseInsensitive;
+            if (opts.dotMatchesNewline) reOpts |= NSRegularExpressionDotMatchesLineSeparators;
+
+            re = [NSRegularExpression regularExpressionWithPattern:searchText
+                                                        options:reOpts
+                                                            error:nil];
+
+            if (!re) {
+                if (totalFilesScanned) *totalFilesScanned = filesScanned;
+                return allResults;
+            }
+        }
+
         for (NSInteger ln = 0; ln < (NSInteger)lines.count; ln++) {
             if (cancelFlag && *cancelFlag) break;
 
             NSString *line = lines[ln];
             NSRange range;
-
+            
             if (opts.searchType == NPPSearchRegex) {
-                NSRegularExpressionOptions reOpts = 0;
-                if (!opts.matchCase) reOpts |= NSRegularExpressionCaseInsensitive;
-                if (opts.dotMatchesNewline) reOpts |= NSRegularExpressionDotMatchesLineSeparators;
-                NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:searchText
-                                                                                   options:reOpts error:nil];
-                if (!re) { if (totalFilesScanned) *totalFilesScanned = filesScanned; return allResults; }
                 NSTextCheckingResult *m = [re firstMatchInString:line options:0
                                                           range:NSMakeRange(0, line.length)];
                 if (!m) continue;
