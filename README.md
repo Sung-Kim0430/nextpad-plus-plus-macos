@@ -1,6 +1,6 @@
-# Notepad++ for macOS
+# Nextpad++ for macOS
 
-**The first native port of Notepad++ to macOS.** A full port of the original [Notepad++](https://notepad-plus-plus.org) codebase — not a rewrite, not an alternative, not Wine.
+**The native independent port of Notepad++ to macOS.** A full port of the original [Notepad++](https://notepad-plus-plus.org) codebase — not a rewrite, not an alternative, not Wine.
 
 <p align="center">
   <a href="https://notepad-plus-plus-mac.org"><img src="https://notepad-plus-plus-mac.org/assets/images/icon-128x128.png" alt="Notepad++ for macOS app icon" width="128" height="128"></a>
@@ -25,7 +25,7 @@
 
 ## What this is
 
-Notepad++ for macOS brings the beloved Windows code editor to Apple's desktop platform as a **fully native Mac application**. This is the actual Notepad++ codebase ported to run natively on macOS — built from source in Objective-C++, using platform-native APIs, with no compatibility layer in between.
+Nextpad++ for macOS brings the beloved Windows code editor to Apple's desktop platform as a **fully native Mac application**. This is the actual Notepad++ codebase ported to run natively on macOS — built from source in Objective-C++, using platform-native APIs, with no compatibility layer in between.
 
 - ✅ **Native macOS app** — no Wine, Porting Kit, CrossOver, or emulation
 - ✅ **Universal Binary** — runs natively on Apple Silicon (M1–M5) and Intel
@@ -54,7 +54,7 @@ Get the latest build from **[notepad-plus-plus-mac.org/download](https://notepad
 The download is a signed, notarized `.dmg`:
 
 1. Open the downloaded `.dmg`
-2. Drag **Notepad++** to your **Applications** folder
+2. Drag **Nextpad++** to your **Applications** folder
 3. Launch from Applications or Spotlight
 
 ## System Requirements
@@ -84,7 +84,7 @@ The download is a signed, notarized `.dmg`:
 
 ### Is this the "real" Notepad++ for Mac?
 
-Yes. This is the actual Notepad++ codebase ported to run natively on macOS. It is not an alternative, a knockoff, a Wine wrapper, or a new editor that imitates Notepad++. It's Notepad++.
+This is the actual Notepad++ codebase ported to run natively on macOS. It is not a knockoff, a Wine wrapper, or a new editor that imitates Notepad++.
 
 ### Do I need Wine, Porting Kit, or CrossOver?
 
@@ -92,7 +92,7 @@ No. None of those. Notepad++ for macOS is a full native port of the original Win
 
 ### Does it work on Apple Silicon?
 
-Yes. Notepad++ for macOS is built as a Universal Binary with native ARM64 support. It runs at full speed on all Apple Silicon Macs without Rosetta translation.
+Yes. Nextpad++ for macOS is built as a Universal Binary with native ARM64 support. It runs at full speed on all Apple Silicon Macs without Rosetta translation.
 
 ### Is it free?
 
