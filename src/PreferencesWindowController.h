@@ -9,12 +9,16 @@ extern NSString *const kPrefAutoIndent;          // NSInteger 0=None 1=Advanced 
 extern NSString *const kPrefBackspaceUnindent;   // BOOL, default NO
 extern NSString *const kPrefTabOverrides;        // NSDictionary<langName, @{@"tabSize":@N, @"useTabs":@BOOL}>
 extern NSString *const kPrefShowLineNumbers;
-/// Word wrap session state. NSUserDefaults is used as a transient
-/// broadcast channel only — not as persistent storage. AppDelegate
-/// resets this to NO at the top of applicationDidFinishLaunching: so
-/// every fresh launch starts at OFF regardless of last session's value.
-/// User toggle via toolbar/menu writes here + propagates to all editors
-/// across all open windows; new tabs read it via applyPreferencesFromDefaults.
+/// Word wrap. Persistent across launches (default NO).
+/// Three UI surfaces all read/write this key: the Preferences > Editor
+/// "Word wrap" checkbox, the View > Word Wrap menu item, and the toolbar
+/// Word Wrap button. Each writes the new state to kPrefWordWrap; toolbar/
+/// menu also propagates to every open editor across all open windows via
+/// NPPWordWrapSessionChanged broadcast (so a click universalizes the
+/// state mid-session). New tabs inherit the saved state via
+/// EditorView.applyPreferencesFromDefaults reading this key on init.
+/// RTL editors are skipped from the OFF path (they require wrap on for
+/// layout — see EditorView.setTextDirectionRTL: + _savedWrapBeforeRTL).
 extern NSString *const kPrefWordWrap;
 extern NSString *const kPrefHighlightCurrentLine;
 extern NSString *const kPrefEOLType;

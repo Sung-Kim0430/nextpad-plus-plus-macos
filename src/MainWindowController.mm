@@ -7894,6 +7894,10 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
 
     // Title bar (full path vs filename only)
     [self updateTitle];
+
+    // Toolbar toggle states (Word wrap, etc.) follow prefs — keep them
+    // in sync after a Preferences-pane change.
+    [self _refreshToolbarStates];
 }
 
 - (void)_darkModeChanged:(NSNotification *)n {

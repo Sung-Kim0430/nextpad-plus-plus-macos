@@ -11,7 +11,7 @@ NSString *const kPrefAutoIndent         = @"autoIndent";  // 0=None 1=Advanced 2
 NSString *const kPrefBackspaceUnindent = @"backspaceUnindent";
 NSString *const kPrefTabOverrides      = @"tabOverrides"; // {langName: {tabSize:N, useTabs:BOOL}}
 NSString *const kPrefShowLineNumbers    = @"showLineNumbers";
-NSString *const kPrefWordWrap           = @"wordWrap";       // session-only; reset to NO each launch
+NSString *const kPrefWordWrap           = @"wordWrap";       // persistent across launches; default NO
 NSString *const kPrefHighlightCurrentLine = @"highlightCurrentLine";
 NSString *const kPrefEOLType            = @"eolType";       // 0=CRLF 1=LF 2=CR
 NSString *const kPrefEncoding           = @"encoding";      // 0=UTF-8 1=Latin-1
@@ -109,7 +109,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefAutoIndent:         @1,   // 0=None 1=Advanced 2=Basic
         kPrefBackspaceUnindent:  @NO,
         kPrefShowLineNumbers:    @YES,
-        kPrefWordWrap:           @NO,   // session-only; AppDelegate resets at launch
+        kPrefWordWrap:           @NO,   // persistent default (was session-only, now persistent)
         kPrefHighlightCurrentLine: @YES,
         kPrefEOLType:            @1,
         kPrefEncoding:           @0,
@@ -250,7 +250,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefAutoIndent:         @1,   // 0=None 1=Advanced 2=Basic
         kPrefBackspaceUnindent:  @NO,
         kPrefShowLineNumbers:    @YES,
-        kPrefWordWrap:           @NO,   // session-only; AppDelegate resets at launch
+        kPrefWordWrap:           @NO,   // persistent default (was session-only, now persistent)
         kPrefHighlightCurrentLine: @YES,
         kPrefEOLType:            @1,
         kPrefEncoding:           @0,
@@ -598,6 +598,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     NppLocalizer *loc = [NppLocalizer shared];
     NSArray *checks = @[
         @[[loc translate:@"Show line numbers"],               @103, kPrefShowLineNumbers],
+        @[[loc translate:@"Word wrap"],                       @104, kPrefWordWrap],
         @[[loc translate:@"Highlight current line"],          @105, kPrefHighlightCurrentLine],
         @[[loc translate:@"Auto-close brackets ( ) [ ] { }"], @700, kPrefAutoCloseBrackets],
         @[[loc translate:@"Enable virtual space"],            @702, kPrefVirtualSpace],
@@ -1475,6 +1476,7 @@ static NSDictionary<NSString *, NSString *> *_langDisplayNames() {
             break;
         }
         case 103: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefShowLineNumbers]; break;
+        case 104: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefWordWrap]; break;
         case 105: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefHighlightCurrentLine]; break;
         case 200: [ud setInteger:[(NSPopUpButton *)sender indexOfSelectedItem] forKey:kPrefEOLType]; break;
         case 201: [ud setInteger:[(NSPopUpButton *)sender indexOfSelectedItem] forKey:kPrefEncoding]; break;
