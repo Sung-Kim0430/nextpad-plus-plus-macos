@@ -3036,6 +3036,29 @@ static void removeMacroFromShortcutsXML(NSString *name) {
     [self updateTitle];
 }
 
+// Issue #63: macOS routes Finder "Open With…" / drag-drop / double-click
+// events to NSApplicationDelegate's openFile(s) handlers regardless of
+// window state. Without an explicit deminiaturize + activate the file is
+// silently added to a tab inside a window that stays in the Dock — users
+// see no feedback and have to hunt for the Dock icon. This helper is the
+// single canonical "give the user back their window" sequence:
+//
+//   • activateIgnoringOtherApps:YES — pulls focus away from Finder.
+//   • deminiaturize: if currently minimized — pops the window out of the
+//     Dock with the standard genie animation.
+//   • makeKeyAndOrderFront: — covers the secondary cases too: window
+//     hidden via NSApplication's hide: (Cmd-H), or app simply
+//     backgrounded but visible. Idempotent for already-front windows.
+//
+// We deliberately do NOT call orderedIndex/orderFront chains; those add
+// nothing here and risk reordering documents when multiple windows are
+// open in a future multi-window setup.
+- (void)bringWindowForward {
+    [NSApp activateIgnoringOtherApps:YES];
+    if (self.window.miniaturized) [self.window deminiaturize:nil];
+    [self.window makeKeyAndOrderFront:nil];
+}
+
 #pragma mark - Recent Files
 
 - (void)addToRecentFiles:(NSString *)path {

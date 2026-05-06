@@ -224,6 +224,12 @@
             [self.mainWindowController openFileAtPath:path];
         }
         [_pendingFilePaths removeAllObjects];
+        // Files queued during launch mean the user explicitly asked us to
+        // open something. NSApplication usually foregrounds a launching
+        // app naturally, but state restoration can leave the window
+        // miniaturized — call the helper so the freshly-loaded files are
+        // actually visible (issue #63).
+        [self.mainWindowController bringWindowForward];
     }
 
     // ── Background update check (non-blocking, after 5 second delay) ────
@@ -349,6 +355,11 @@
     }
     MainWindowController *mwc = [self _activeWindowController];
     [mwc openFileAtPath:filename];
+    // Issue #63: surface the window to the user. Without this, opening a
+    // file from Finder while the app is minimized silently adds the file
+    // to a tab inside an invisible window and the user has to hunt for
+    // the Dock icon to see it.
+    [mwc bringWindowForward];
     return YES;
 }
 
@@ -362,6 +373,10 @@
     for (NSString *path in filenames) {
         [mwc openFileAtPath:path];
     }
+    // Issue #63: bring the window forward AFTER all files are added so
+    // there's no flicker between batches and the front-most tab is the
+    // last one opened (the standard macOS behaviour for multi-file open).
+    [mwc bringWindowForward];
     [sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
 }
 
