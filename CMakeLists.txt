@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(NotepadPlusPlusMac OBJCXX CXX C)
 
+if(APPLE)
+    set(CMAKE_AR /usr/bin/ar)
+    set(CMAKE_RANLIB /usr/bin/ranlib)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OBJCXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
