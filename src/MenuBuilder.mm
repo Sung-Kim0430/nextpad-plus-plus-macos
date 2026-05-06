@@ -499,8 +499,17 @@ static NSMenu *buildLanguageMenu() {
     [searchMenu addItem:item(@"Find (Volatile) Next",     @selector(findVolatileNext:),     @"")];
     [searchMenu addItem:item(@"Find (Volatile) Previous", @selector(findVolatilePrevious:), @"")];
     addSep(searchMenu);
+    // ⇧⌘H opens the Find window's Replace tab (issue #61). The previous
+    // shortcut ⌥⌘H clashed with the macOS-standard "Hide Others"
+    // (App-menu, MenuBuilder.mm:222-223), and macOS does not define a
+    // winner when two app menu items share a shortcut — the result was
+    // undefined dispatch. ⇧⌘H also forms a logical pair with ⌘F and
+    // ⇧⌘F, so the Shift modifier consistently means "another Find
+    // variant", and matches the natural Mac mapping for Notepad++ on
+    // Windows where Ctrl+H is Replace. Both ⇧⌘H itself and ⌥⌘H now
+    // dispatch unambiguously to a single, expected target.
     [searchMenu addItem:itemMod(@"Replace…", @selector(showReplacePanel:), @"h",
-                                NSEventModifierFlagCommand | NSEventModifierFlagOption)];
+                                NSEventModifierFlagCommand | NSEventModifierFlagShift)];
     [searchMenu addItem:item(@"Incremental Search", @selector(showIncrementalSearch:), @"i")];
     addSep(searchMenu);
     [searchMenu addItem:item(@"Search Results Window",  @selector(showSearchResultsWindow:), @"")];
