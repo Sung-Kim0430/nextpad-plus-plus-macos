@@ -6739,6 +6739,10 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
                                              backing:NSBackingStoreBuffered
                                                defer:NO];
         panel.title = [[NppLocalizer shared] translate:@"Run..."];
+        // Identifier is NOT translated, so _runDlgVariableSelected: can
+        // find this window again across language switches. The title
+        // alone would break the lookup in any non-English locale.
+        panel.identifier = @"NPPRunDialog";
         panel.releasedWhenClosed = NO;
         panel.hidesOnDeactivate = NO;
         NSView *v = panel.contentView;
@@ -6862,10 +6866,12 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
 /// Variable menu item selected — insert into combo box
 - (void)_runDlgVariableSelected:(NSMenuItem *)mi {
     NSString *var = [NSString stringWithFormat:@"$(%@)", mi.representedObject];
-    // Find the combo box
+    // Look the Run dialog up by identifier rather than title — the title
+    // is translated to the active UI language ("Запустить...", "Exécuter…",
+    // …) and would silently fail to match the English literal.
     NSComboBox *combo = nil;
     for (NSWindow *w in [NSApp windows])
-        if ([w.title isEqualToString:@"Run..."]) {
+        if ([w.identifier isEqualToString:@"NPPRunDialog"]) {
             for (NSView *sub in w.contentView.subviews)
                 if ([sub isKindOfClass:[NSComboBox class]]) { combo = (NSComboBox *)sub; break; }
             break;
@@ -7278,6 +7284,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         rangeStartField.stringValue = @"0";
         rangeStartField.alignment = NSTextAlignmentCenter;
         rangeStartField.enabled = NO;  // disabled until Custom range selected
+        rangeStartField.tag = 5;       // looked up by tag in _findCharInRange:
         [v addSubview:rangeStartField];
 
         NSTextField *dash = [NSTextField labelWithString:@"\u2013"];
@@ -7288,6 +7295,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         rangeEndField.stringValue = @"255";
         rangeEndField.alignment = NSTextAlignmentCenter;
         rangeEndField.enabled = NO;  // disabled until Custom range selected
+        rangeEndField.tag = 6;
         [v addSubview:rangeEndField];
 
         // Direction group
@@ -7311,6 +7319,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         // Wrap around
         wrapCheck = [NSButton checkboxWithTitle:[[NppLocalizer shared] translate:@"Wrap around"] target:nil action:nil];
         wrapCheck.frame = NSMakeRect(185, y - 15, 120, 20);
+        wrapCheck.tag = 4;             // looked up by tag in _findCharInRange:
         [v addSubview:wrapCheck];
 
         // Find and Close buttons — horizontal at the bottom
@@ -7365,43 +7374,30 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     if (!ed) return;
     ScintillaView *sci = ed.scintillaView;
 
-    // Get the panel controls via the sender's window
+    // Look every control up by the tag we assigned at construction. The
+    // previous implementation scanned subviews by `title containsString:`
+    // / frame X-coordinate, which silently failed in any non-English UI
+    // language: every radio button title gets translated by NppLocalizer
+    // before this handler runs, so the comparisons returned all-nil and
+    // the dialog ran with default 0-255 + forward direction regardless
+    // of what the user actually picked.
+    //
+    // viewWithTag: walks the subview tree (including inside the
+    // NSBox direction group), so the flat lookup covers radio buttons,
+    // checkboxes, and text fields uniformly. Tags are assigned in
+    // showFindCharsInRange: above.
     NSPanel *panel = (NSPanel *)[sender window];
     NSView *v = panel.contentView;
 
-    // Find controls by walking subviews
-    NSButton *radioNonASCII = nil, *radioASCII = nil, *radioCustom = nil;
-    NSButton *radioDirUp = nil, *wrapCheck = nil;
-    NSTextField *rangeStartField = nil, *rangeEndField = nil;
-
-    for (NSView *sub in v.subviews) {
-        if ([sub isKindOfClass:[NSButton class]]) {
-            NSButton *btn = (NSButton *)sub;
-            if ([btn.title containsString:@"Non-ASCII"]) radioNonASCII = btn;
-            else if ([btn.title containsString:@"ASCII char"]) radioASCII = btn;
-            else if ([btn.title containsString:@"Custom"]) radioCustom = btn;
-            else if ([btn.title isEqualToString:@"Wrap around"]) wrapCheck = btn;
-        }
-        if ([sub isKindOfClass:[NSBox class]]) {
-            for (NSView *bs in sub.subviews) {
-                // NSBox content view
-                for (NSView *inner in bs.subviews) {
-                    if ([inner isKindOfClass:[NSButton class]]) {
-                        NSButton *btn = (NSButton *)inner;
-                        if ([btn.title isEqualToString:@"Up"]) radioDirUp = btn;
-                    }
-                }
-            }
-        }
-    }
-    // Find text fields (the small ones for custom range)
-    for (NSView *sub in v.subviews) {
-        if ([sub isKindOfClass:[NSTextField class]] && [(NSTextField *)sub isEditable]) {
-            NSTextField *tf = (NSTextField *)sub;
-            if (NSMinX(tf.frame) < 250) rangeStartField = tf;
-            else rangeEndField = tf;
-        }
-    }
+    NSButton    *radioNonASCII   = (NSButton *)   [v viewWithTag:1];
+    NSButton    *radioASCII      = (NSButton *)   [v viewWithTag:2];
+    // tag 3 is "Custom range" — its selection state is implicit (the
+    // fallback branch fires when neither NonASCII nor ASCII is on), so we
+    // don't need a reference to it here.
+    NSButton    *wrapCheck       = (NSButton *)   [v viewWithTag:4];
+    NSTextField *rangeStartField = (NSTextField *)[v viewWithTag:5];
+    NSTextField *rangeEndField   = (NSTextField *)[v viewWithTag:6];
+    NSButton    *radioDirUp      = (NSButton *)   [v viewWithTag:10];
 
     // Determine byte range
     unsigned char beginRange, endRange;
