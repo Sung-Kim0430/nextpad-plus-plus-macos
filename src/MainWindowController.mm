@@ -2314,9 +2314,18 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     _tbIndentGuide.toggledOn = _showIndentGuides;
     [_tbIndentGuide setNeedsDisplay:YES];
 
-    // Word Wrap (blue highlight)
-    EditorView *wrapEd = [self currentEditor];
-    _tbWrap.toggledOn = wrapEd && wrapEd.wordWrapEnabled;
+    // Word Wrap (blue highlight). Read kPrefWordWrap directly rather
+    // than the focused editor's wordWrapEnabled to avoid a notification
+    // observer-order race: when the user toggles the Preferences > Editor
+    // checkbox, prefChanged: posts NPPPreferencesChanged and MWC's
+    // observer (registered before any EditorView's observer) runs first.
+    // At that moment the editor's _wordWrapEnabled ivar still holds the
+    // old value because applyPreferencesFromDefaults hasn't run yet on
+    // that editor. The pref, however, was written synchronously before
+    // the notification was posted, so it's always current. Both UI
+    // surfaces (toolbar/menu toggle path and Preferences-pane path)
+    // write the pref first, so it's the authoritative cross-source.
+    _tbWrap.toggledOn = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefWordWrap];
     [_tbWrap setNeedsDisplay:YES];
 
     // Panel toggles (blue highlight when panel is visible)
