@@ -681,7 +681,9 @@ static NSMenu *buildLanguageMenu() {
     // ── Navigation ──
     [tabViewMenu addItem:item(@"First Tab",    @selector(selectFirstTab:),    @"")];
     [tabViewMenu addItem:item(@"Last Tab",     @selector(selectLastTab:),     @"")];
-    [tabViewMenu addItem:item(@"Multi-line Tabs", @selector(toggleTabBarWrap:), @"")];
+    // Match the Preferences > Tab Bar checkbox label so the existing
+    // localization entry (id=90224) translates this menu item too.
+    [tabViewMenu addItem:item(@"Wrap tabs to multiple lines", @selector(toggleTabBarWrap:), @"")];
     {
         unichar pgdn = NSPageDownFunctionKey;
         unichar pgup = NSPageUpFunctionKey;

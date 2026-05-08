@@ -137,7 +137,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefTabMaxLabelWidth:     @190,
         kPrefTabCloseButton:       @YES,
         kPrefDoubleClickTabClose:  @NO,
-        kPrefTabBarWrap:           @YES,
+        kPrefTabBarWrap:           @NO,
         kPrefVirtualSpace:         @NO,
         kPrefScrollBeyondLastLine: @NO,
         kPrefCaretBlinkRate:       @500,
