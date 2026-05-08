@@ -142,7 +142,11 @@
     } else if (cli.filePaths.count > 0) {
         [self _openFilesFromCLI:cli inController:self.mainWindowController];
         hasContent = YES;
-    } else if (!cli.noSession) {
+    } else if (!cli.noSession &&
+               [[NSUserDefaults standardUserDefaults] boolForKey:kPrefRememberSession]) {
+        // Issue #87 — Preferences > Backup > "Remember current session for next launch"
+        // mirrors the Windows NPP RememberLastSession option. Off → start with a clean
+        // editor on each launch. -nosession CLI flag still overrides per-invocation.
         hasContent = [self.mainWindowController restoreLastSession];
     }
     // If nothing was opened, create an empty tab (first launch or -nosession with no files)

@@ -1,4 +1,6 @@
 #import "MainWindowController.h"
+#import "AppDelegate.h"
+#import "NppCommandLineParams.h"
 #import "TabManager.h"
 #import "EditorView.h"
 #import "FindReplacePanel.h"
@@ -2819,6 +2821,15 @@ static BOOL groupHasTrailingSep(NSString *ident) {
 
         [tabs addObject:info];
     }
+
+    // Issue #87 — don't overwrite session.plist with an empty session.
+    // The loop above skips unmodified untitled tabs, so a window that only
+    // holds the default empty buffer produces tabs.count == 0. Writing that
+    // would destructively erase any previously-saved session — which manifests
+    // when the user toggles "Remember session" OFF, quits (save skipped, file
+    // preserved), relaunches (1 default tab), toggles back ON, then quits:
+    // without this guard the toggle-on quit would wipe the preserved session.
+    if (tabs.count == 0) return;
 
     NSDictionary *session = @{
         @"tabs":          tabs,
@@ -8676,7 +8687,21 @@ static int64_t _sysctlInt(const char *name) {
     // Windows NPP behaviour: no save prompts on quit.
     // Back up all modified editors to ~/.notepad++/backup/ and save session.
     // On next launch, modified files reload from backup and show as unsaved.
-    [self saveSession];
+    //
+    // Issue #87 — gate the session save on the new "Remember current session
+    // for next launch" pref AND on -nosession CLI flag (matches Windows NPP
+    // behaviour: both pref-off and -nosession suppress the per-launch save so
+    // a stale session.plist isn't left behind to surprise the user later).
+    // Auto-backup of unsaved files runs separately on its own timer and is
+    // intentionally NOT coupled — losing unsaved work to a crash is a separate
+    // concern from reopening tabs across launches.
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    BOOL rememberSession = [ud boolForKey:kPrefRememberSession];
+    AppDelegate *appDel = (AppDelegate *)NSApp.delegate;
+    BOOL cliNoSession = [appDel isKindOfClass:[AppDelegate class]] ? appDel.cliParams.noSession : NO;
+    if (rememberSession && !cliNoSession) {
+        [self saveSession];
+    }
     writeConfigXML();
     return YES;
 }

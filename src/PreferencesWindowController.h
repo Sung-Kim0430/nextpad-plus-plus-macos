@@ -25,6 +25,7 @@ extern NSString *const kPrefEOLType;
 extern NSString *const kPrefEncoding;
 extern NSString *const kPrefAutoBackup;
 extern NSString *const kPrefBackupInterval;
+extern NSString *const kPrefRememberSession;     // BOOL, default YES — when off, app starts with a clean editor on each launch (issue #87)
 extern NSString *const kPrefZoomLevel;
 extern NSString *const kPrefSpellCheck;          // BOOL, default NO
 extern NSString *const kPrefAutoCompleteEnable;  // BOOL, default YES
