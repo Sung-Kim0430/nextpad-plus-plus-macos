@@ -7869,7 +7869,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     tv.font = [NSFont fontWithName:@"Menlo" size:11];
     tv.string =
         @"Usage:\n\n"
-        @"notepad++ [--help] [-multiInst] [-noPlugin] [-lLanguage] [-udl=\"My UDL Name\"]\n"
+        @"nextpad++ [--help] [-multiInst] [-noPlugin] [-lLanguage] [-udl=\"My UDL Name\"]\n"
         @"[-LlangCode] [-nLineNumber] [-cColumnNumber] [-pPosition] [-xLeftPos] [-yTopPos]\n"
         @"[-monitor] [-nosession] [-notabbar] [-loadingTime] [-alwaysOnTop]\n"
         @"[-ro] [-fullReadOnly] [-fullReadOnlySavingForbidden] [-openSession] [-r]\n"
@@ -7910,8 +7910,16 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         @"-openFoldersAsWorkspace: Open filePath of folder(s) as workspace\n"
         @"-titleAdd=\"string\": Add string to Notepad++ title bar\n"
         @"filePath: File or folder name to open (absolute or relative path name)\n\n"
-        @"Note: On macOS, most CLI arguments are not yet implemented.\n"
-        @"Currently supported: filePath (open files via command line or Finder).";
+        @"Note (macOS): most flags above work as documented. Not yet "
+        @"implemented: -L, -settingsDir, and the Ghost-typing flags "
+        @"(-qn / -qt / -qf / -qSpeed). The -fullReadOnly and "
+        @"-fullReadOnlySavingForbidden flags currently behave like -ro.\n\n"
+        @"To use the 'nextpad++' command shown above, run "
+        @"App menu > 'Install nextpad++ Command Line Tool…'. Without "
+        @"the symlink you can still pass arguments via:\n"
+        @"  open -a Notepad++ --args -n42 file.txt\n"
+        @"or invoke the binary directly:\n"
+        @"  /Applications/Notepad++.app/Contents/MacOS/Notepad++ file.txt";
 
     scroll.documentView = tv;
     [panel.contentView addSubview:scroll];
@@ -7926,6 +7934,112 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
 
     [NSApp runModalForWindow:panel];
     [panel orderOut:nil];
+}
+
+// ── Install command line tool ─────────────────────────────────────────────────
+// Quote a path for safe inclusion in a shell command run by AppleScript.
+// AppleScript already wraps the script in double-quotes so the inner shell
+// sees it as a normal POSIX command. We single-quote and escape any embedded
+// single quotes (`'` → `'\''`) to handle paths with arbitrary characters
+// including spaces, $, &, etc.
+static NSString *_shellQuote(NSString *path) {
+    NSString *escaped = [path stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"];
+    return [NSString stringWithFormat:@"'%@'", escaped];
+}
+
+// Creates a /usr/local/bin/nextpad++ symlink pointing at this app's binary so
+// the user can run `nextpad++ file.txt` from any terminal. /usr/local/bin is
+// in macOS's default PATH (via /etc/paths) so no shell config edits are
+// needed when the system path is taken. Falls back to ~/.local/bin if the
+// user declines admin auth.
+- (void)installCommandLineTool:(id)sender {
+    NSString *binaryPath = [NSBundle mainBundle].executablePath;
+    if (!binaryPath.length) return;
+
+    NSString *systemTarget = @"/usr/local/bin/nextpad++";
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    // Already installed at the system location pointing at this same app?
+    NSString *existing = [fm destinationOfSymbolicLinkAtPath:systemTarget error:nil];
+    if ([existing isEqualToString:binaryPath]) {
+        NSAlert *a = [[NSAlert alloc] init];
+        a.messageText = [[NppLocalizer shared] translate:@"Already installed"];
+        a.informativeText = [NSString stringWithFormat:@"nextpad++ is already installed at %@\n\nUsage:\n  nextpad++ file.txt\n  nextpad++ -n42 main.cpp", systemTarget];
+        [a runModal];
+        return;
+    }
+
+    // Try writing to /usr/local/bin without elevation first (works only if
+    // user owns it — e.g. Homebrew Intel installs).
+    NSError *err = nil;
+    [fm removeItemAtPath:systemTarget error:nil];
+    BOOL ok = [fm createSymbolicLinkAtPath:systemTarget withDestinationPath:binaryPath error:&err];
+
+    if (!ok) {
+        // Need admin. Offer two paths.
+        NSAlert *prompt = [[NSAlert alloc] init];
+        prompt.messageText = [[NppLocalizer shared] translate:@"Install nextpad++ Command Line Tool"];
+        prompt.informativeText = [NSString stringWithFormat:
+            @"Where would you like to install the 'nextpad++' command?\n\n"
+             "• /usr/local/bin (in default PATH — requires administrator password)\n"
+             "• ~/.local/bin (no password — you may need to add it to your PATH)"];
+        [prompt addButtonWithTitle:@"/usr/local/bin"];
+        [prompt addButtonWithTitle:@"~/.local/bin"];
+        [prompt addButtonWithTitle:[[NppLocalizer shared] translate:@"Cancel"]];
+        NSModalResponse resp = [prompt runModal];
+
+        if (resp == NSAlertThirdButtonReturn) return; // Cancel
+
+        if (resp == NSAlertFirstButtonReturn) {
+            // Admin install via osascript with administrator privileges.
+            // Quote both paths so embedded spaces in the .app path don't break.
+            NSString *script = [NSString stringWithFormat:
+                @"do shell script \"mkdir -p /usr/local/bin && ln -sf %@ %@\" with administrator privileges",
+                _shellQuote(binaryPath), _shellQuote(systemTarget)];
+            NSDictionary *errInfo = nil;
+            [[[NSAppleScript alloc] initWithSource:script] executeAndReturnError:&errInfo];
+            NSAlert *a = [[NSAlert alloc] init];
+            if (errInfo) {
+                a.messageText = [[NppLocalizer shared] translate:@"Installation failed"];
+                a.informativeText = errInfo[NSAppleScriptErrorMessage] ?: @"Unknown error.";
+            } else {
+                a.messageText = [[NppLocalizer shared] translate:@"Installed"];
+                a.informativeText = [NSString stringWithFormat:@"nextpad++ command installed at %@\n\nUsage:\n  nextpad++ file.txt\n  nextpad++ -n42 main.cpp", systemTarget];
+            }
+            [a runModal];
+            return;
+        }
+
+        // resp == NSAlertSecondButtonReturn — fallback to ~/.local/bin
+        NSString *userBinDir = [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin"];
+        [fm createDirectoryAtPath:userBinDir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *userTarget = [userBinDir stringByAppendingPathComponent:@"nextpad++"];
+        [fm removeItemAtPath:userTarget error:nil];
+        err = nil;
+        ok = [fm createSymbolicLinkAtPath:userTarget withDestinationPath:binaryPath error:&err];
+
+        NSAlert *a = [[NSAlert alloc] init];
+        if (ok) {
+            // Check if userBinDir is on PATH; warn if not.
+            NSString *pathEnv = NSProcessInfo.processInfo.environment[@"PATH"] ?: @"";
+            BOOL onPath = [[pathEnv componentsSeparatedByString:@":"] containsObject:userBinDir];
+            NSString *advice = onPath ? @""
+                : [NSString stringWithFormat:@"\n\nNote: %@ is not on your PATH. Add this to ~/.zshrc (or ~/.bash_profile):\n  export PATH=\"$HOME/.local/bin:$PATH\"\n\nThen open a new terminal.", userBinDir];
+            a.messageText = [[NppLocalizer shared] translate:@"Installed"];
+            a.informativeText = [NSString stringWithFormat:@"nextpad++ command installed at %@%@", userTarget, advice];
+        } else {
+            a.messageText = [[NppLocalizer shared] translate:@"Installation failed"];
+            a.informativeText = err.localizedDescription ?: @"Unknown error.";
+        }
+        [a runModal];
+        return;
+    }
+
+    // Plain (non-elevated) install succeeded — user owns /usr/local/bin.
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = [[NppLocalizer shared] translate:@"Installed"];
+    a.informativeText = [NSString stringWithFormat:@"nextpad++ command installed at %@\n\nUsage:\n  nextpad++ file.txt\n  nextpad++ -n42 main.cpp", systemTarget];
+    [a runModal];
 }
 
 // ── Dark mode ────────────────────────────────────────────────────────────────
