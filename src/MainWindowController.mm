@@ -8018,20 +8018,108 @@ static NSString *_shellQuote(NSString *path) {
         err = nil;
         ok = [fm createSymbolicLinkAtPath:userTarget withDestinationPath:binaryPath error:&err];
 
-        NSAlert *a = [[NSAlert alloc] init];
-        if (ok) {
-            // Check if userBinDir is on PATH; warn if not.
-            NSString *pathEnv = NSProcessInfo.processInfo.environment[@"PATH"] ?: @"";
-            BOOL onPath = [[pathEnv componentsSeparatedByString:@":"] containsObject:userBinDir];
-            NSString *advice = onPath ? @""
-                : [NSString stringWithFormat:@"\n\nNote: %@ is not on your PATH. Add this to ~/.zshrc (or ~/.bash_profile):\n  export PATH=\"$HOME/.local/bin:$PATH\"\n\nThen open a new terminal.", userBinDir];
-            a.messageText = [[NppLocalizer shared] translate:@"Installed"];
-            a.informativeText = [NSString stringWithFormat:@"nextpad++ command installed at %@%@", userTarget, advice];
-        } else {
+        if (!ok) {
+            NSAlert *a = [[NSAlert alloc] init];
             a.messageText = [[NppLocalizer shared] translate:@"Installation failed"];
             a.informativeText = err.localizedDescription ?: @"Unknown error.";
+            [a runModal];
+            return;
         }
-        [a runModal];
+
+        // Symlink succeeded. Decide PATH-status messaging.
+        NSString *pathEnv = NSProcessInfo.processInfo.environment[@"PATH"] ?: @"";
+        BOOL onPath = [[pathEnv componentsSeparatedByString:@":"] containsObject:userBinDir];
+
+        if (onPath) {
+            NSAlert *a = [[NSAlert alloc] init];
+            a.messageText = [[NppLocalizer shared] translate:@"Installed"];
+            a.informativeText = [NSString stringWithFormat:@"nextpad++ command installed at %@\n\nUsage:\n  nextpad++ file.txt\n  nextpad++ -n42 main.cpp", userTarget];
+            [a runModal];
+            return;
+        }
+
+        // Not on PATH — make this prominent and offer one-click fixes.
+        // Detect the user's shell from $SHELL and pick the right rc file.
+        NSString *shellPath = NSProcessInfo.processInfo.environment[@"SHELL"] ?: @"/bin/zsh";
+        NSString *shellName = shellPath.lastPathComponent;
+        NSString *configPath, *exportLine;
+        if ([shellName isEqualToString:@"bash"]) {
+            configPath = [NSHomeDirectory() stringByAppendingPathComponent:@".bash_profile"];
+            exportLine = @"export PATH=\"$HOME/.local/bin:$PATH\"";
+        } else if ([shellName isEqualToString:@"fish"]) {
+            configPath = [NSHomeDirectory() stringByAppendingPathComponent:@".config/fish/config.fish"];
+            exportLine = @"fish_add_path -U $HOME/.local/bin";
+        } else {
+            // zsh is macOS default since Catalina; everything else falls back here
+            configPath = [NSHomeDirectory() stringByAppendingPathComponent:@".zshrc"];
+            exportLine = @"export PATH=\"$HOME/.local/bin:$PATH\"";
+        }
+        NSString *configDisplay = [configPath stringByReplacingOccurrencesOfString:NSHomeDirectory() withString:@"~"];
+
+        NSAlert *a = [[NSAlert alloc] init];
+        a.alertStyle = NSAlertStyleWarning;
+        a.messageText = [[NppLocalizer shared] translate:
+            @"Installed — but ~/.local/bin is not on your PATH"];
+        a.informativeText = [NSString stringWithFormat:
+            @"nextpad++ is installed at %@, but typing 'nextpad++' in a "
+             "terminal will give 'command not found' until ~/.local/bin is "
+             "on your $PATH.\n\n"
+             "Add this line to %@:\n\n"
+             "    %@\n\n"
+             "Then open a new Terminal window. The buttons below can do "
+             "this for you.",
+            userTarget, configDisplay, exportLine];
+        [a addButtonWithTitle:[NSString stringWithFormat:@"Add to %@", configDisplay.lastPathComponent]];
+        [a addButtonWithTitle:@"Copy command"];
+        [a addButtonWithTitle:@"OK"];
+        NSModalResponse pathResp = [a runModal];
+
+        if (pathResp == NSAlertFirstButtonReturn) {
+            // Append the export line to the shell config file (idempotent).
+            NSString *current = [NSString stringWithContentsOfFile:configPath
+                                                          encoding:NSUTF8StringEncoding
+                                                             error:nil] ?: @"";
+            NSAlert *follow = [[NSAlert alloc] init];
+            if ([current rangeOfString:exportLine].location != NSNotFound) {
+                follow.messageText = [[NppLocalizer shared] translate:@"Already in your config"];
+                follow.informativeText = [NSString stringWithFormat:
+                    @"%@ already contains the export line. Open a new "
+                     "Terminal window for it to take effect.", configDisplay];
+            } else {
+                NSString *prefix = current.length && ![current hasSuffix:@"\n"] ? @"\n" : @"";
+                NSString *appended = [current stringByAppendingFormat:
+                    @"%@\n# Added by Notepad++ — nextpad++ CLI\n%@\n",
+                    prefix, exportLine];
+                NSError *werr = nil;
+                BOOL wrote = [appended writeToFile:configPath
+                                        atomically:YES
+                                          encoding:NSUTF8StringEncoding
+                                             error:&werr];
+                if (wrote) {
+                    follow.messageText = [[NppLocalizer shared] translate:@"Added to PATH"];
+                    follow.informativeText = [NSString stringWithFormat:
+                        @"Added the export line to %@. Open a new Terminal "
+                         "window for it to take effect — then 'nextpad++' "
+                         "will work.", configDisplay];
+                } else {
+                    follow.alertStyle = NSAlertStyleCritical;
+                    follow.messageText = [[NppLocalizer shared] translate:@"Could not write"];
+                    follow.informativeText = werr.localizedDescription ?: @"Unknown error.";
+                }
+            }
+            [follow runModal];
+        } else if (pathResp == NSAlertSecondButtonReturn) {
+            // Copy the export line to the clipboard.
+            NSPasteboard *pb = [NSPasteboard generalPasteboard];
+            [pb clearContents];
+            [pb setString:exportLine forType:NSPasteboardTypeString];
+            NSAlert *follow = [[NSAlert alloc] init];
+            follow.messageText = [[NppLocalizer shared] translate:@"Copied"];
+            follow.informativeText = [NSString stringWithFormat:
+                @"Paste this into %@ (or your shell config) and open a "
+                 "new Terminal window.", configDisplay];
+            [follow runModal];
+        }
         return;
     }
 
