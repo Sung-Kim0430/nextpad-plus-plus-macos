@@ -1,6 +1,6 @@
 # Nextpad++ for macOS
 
-**Nextpad++ for macOS is the native independent port of Notepad++ to macOS.** A full port of the original [Notepad++](https://notepad-plus-plus.org) codebase — not a rewrite, not an alternative, not Wine.
+**The native independent port of Notepad++ to macOS.** A full port of the original [Notepad++](https://notepad-plus-plus.org) codebase — not a rewrite, not an alternative, not Wine.
 
 <p align="center">
   <a href="https://nextpad.org"><img src="https://nextpad.org/assets/images/icon-128x128.png" alt="Nextpad++ for macOS app icon" width="128" height="128"></a>
@@ -84,7 +84,7 @@ The download is a signed, notarized `.dmg`:
 
 ### Is this the "real" Notepad++ for Mac?
 
-No. Nextpad++ for macOS is a native independent port of the actual Notepad++ codebase ported to run natively on macOS. It is not a knockoff, a Wine wrapper, or a new editor that imitates Notepad++.
+Yes — Nextpad++ for macOS is a native port of the actual Notepad++ codebase, running directly on macOS as a first-class native application. It is not a knockoff, a Wine wrapper, or a new editor that imitates Notepad++.
 
 ### Do I need Wine, Porting Kit, or CrossOver?
 
@@ -132,6 +132,7 @@ Nextpad++ for macOS is distributed under the [GNU General Public License v3.0](L
 - 🔌 **Plugins:** https://nextpad.org/plugins/
 - 📖 **Documentation:** https://nextpad.org/online-help/
 - 🐛 **Issues:** https://github.com/nextpad-plus-plus/nextpad-plus-plus-macos/issues
+- 💬 **Original Notepad++ Community:** https://community.notepad-plus-plus.org/
 - 💖 **Donate:** https://nextpad.org/donate/
 
 ---
