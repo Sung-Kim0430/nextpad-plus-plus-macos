@@ -1,5 +1,11 @@
 #import "MenuBuilder.h"
 
+// Top-level menu-item tags. See MenuBuilder.h for rationale.
+const NSInteger kMenuTagMacro    = 9900;
+const NSInteger kMenuTagRun      = 9902;
+const NSInteger kMenuTagLanguage = 9904;
+const NSInteger kMenuTagPlugins  = 9905;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 static NSMenuItem *item(NSString *title, SEL sel, NSString *key) {
@@ -211,6 +217,7 @@ static NSMenu *buildLanguageMenu() {
     appItem.submenu = appMenu;
     [appMenu addItemWithTitle:@"About Notepad++" action:@selector(showAboutPanel:) keyEquivalent:@""];
     [appMenu addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""];
+    [appMenu addItemWithTitle:@"Install nextpad++ Command Line Tool…" action:@selector(installCommandLineTool:) keyEquivalent:@""];
     addSep(appMenu);
     [appMenu addItemWithTitle:@"Hide Notepad++" action:@selector(hide:) keyEquivalent:@"h"];
     NSMenuItem *hideOthers = [appMenu addItemWithTitle:@"Hide Others" action:@selector(hideOtherApplications:) keyEquivalent:@"h"];
@@ -493,8 +500,17 @@ static NSMenu *buildLanguageMenu() {
     [searchMenu addItem:item(@"Find (Volatile) Next",     @selector(findVolatileNext:),     @"")];
     [searchMenu addItem:item(@"Find (Volatile) Previous", @selector(findVolatilePrevious:), @"")];
     addSep(searchMenu);
+    // ⇧⌘H opens the Find window's Replace tab (issue #61). The previous
+    // shortcut ⌥⌘H clashed with the macOS-standard "Hide Others"
+    // (App-menu, MenuBuilder.mm:222-223), and macOS does not define a
+    // winner when two app menu items share a shortcut — the result was
+    // undefined dispatch. ⇧⌘H also forms a logical pair with ⌘F and
+    // ⇧⌘F, so the Shift modifier consistently means "another Find
+    // variant", and matches the natural Mac mapping for Notepad++ on
+    // Windows where Ctrl+H is Replace. Both ⇧⌘H itself and ⌥⌘H now
+    // dispatch unambiguously to a single, expected target.
     [searchMenu addItem:itemMod(@"Replace…", @selector(showReplacePanel:), @"h",
-                                NSEventModifierFlagCommand | NSEventModifierFlagOption)];
+                                NSEventModifierFlagCommand | NSEventModifierFlagShift)];
     [searchMenu addItem:item(@"Incremental Search", @selector(showIncrementalSearch:), @"i")];
     addSep(searchMenu);
     [searchMenu addItem:item(@"Search Results Window",  @selector(showSearchResultsWindow:), @"")];
@@ -666,6 +682,9 @@ static NSMenu *buildLanguageMenu() {
     // ── Navigation ──
     [tabViewMenu addItem:item(@"First Tab",    @selector(selectFirstTab:),    @"")];
     [tabViewMenu addItem:item(@"Last Tab",     @selector(selectLastTab:),     @"")];
+    // Match the Preferences > Tab Bar checkbox label so the existing
+    // localization entry (id=90224) translates this menu item too.
+    [tabViewMenu addItem:item(@"Wrap tabs to multiple lines", @selector(toggleTabBarWrap:), @"")];
     {
         unichar pgdn = NSPageDownFunctionKey;
         unichar pgup = NSPageUpFunctionKey;
@@ -804,6 +823,7 @@ static NSMenu *buildLanguageMenu() {
 
     // ── Language ──────────────────────────────────────────────────────────────
     NSMenuItem *langMenuTop = [[NSMenuItem alloc] init];
+    langMenuTop.tag = kMenuTagLanguage; // localization-stable lookup key
     [main addItem:langMenuTop];
     langMenuTop.submenu = buildLanguageMenu();
     langMenuTop.submenu.title = @"Language";
@@ -857,7 +877,7 @@ static NSMenu *buildLanguageMenu() {
 
     // ── Macro ─────────────────────────────────────────────────────────────────
     NSMenuItem *macroItem = [[NSMenuItem alloc] init];
-    macroItem.tag = 9900; // used by rebuildMacroMenu to find this menu
+    macroItem.tag = kMenuTagMacro; // used by rebuildMacroMenu to find this menu
     [main addItem:macroItem];
     NSMenu *macroMenu = submenu(@"Macro");
     macroItem.submenu = macroMenu;
@@ -882,7 +902,7 @@ static NSMenu *buildLanguageMenu() {
 
     // ── Run ───────────────────────────────────────────────────────────────────
     NSMenuItem *runItem = [[NSMenuItem alloc] init];
-    runItem.tag = 9902; // used by rebuildRunMenu to find this menu
+    runItem.tag = kMenuTagRun; // used by rebuildRunMenu to find this menu
     [main addItem:runItem];
     NSMenu *runMenu = submenu(@"Run");
     runItem.submenu = runMenu;
@@ -895,6 +915,7 @@ static NSMenu *buildLanguageMenu() {
 
     // ── Plugins ───────────────────────────────────────────────────────────────
     NSMenuItem *pluginsItem = [[NSMenuItem alloc] init];
+    pluginsItem.tag = kMenuTagPlugins; // localization-stable lookup key
     [main addItem:pluginsItem];
     NSMenu *pluginsMenu = submenu(@"Plugins");
     pluginsItem.submenu = pluginsMenu;

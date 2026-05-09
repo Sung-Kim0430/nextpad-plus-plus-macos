@@ -1,4 +1,6 @@
 #import "MainWindowController.h"
+#import "AppDelegate.h"
+#import "NppCommandLineParams.h"
 #import "TabManager.h"
 #import "EditorView.h"
 #import "FindReplacePanel.h"
@@ -304,6 +306,7 @@ void writeConfigXML(void) {
     NSInteger tabMaxW  = [ud integerForKey:kPrefTabMaxLabelWidth];
     BOOL tabClose      = [ud boolForKey:kPrefTabCloseButton];
     BOOL dblClickClose = [ud boolForKey:kPrefDoubleClickTabClose];
+    BOOL tabBarWrap    = [ud boolForKey:kPrefTabBarWrap];
     BOOL virtualSpace  = [ud boolForKey:kPrefVirtualSpace];
     BOOL scrollBeyond  = [ud boolForKey:kPrefScrollBeyondLastLine];
     NSInteger fontQual = [ud integerForKey:kPrefFontQuality];
@@ -359,8 +362,8 @@ void writeConfigXML(void) {
     [xml appendFormat:@"        <GUIConfig name=\"TabBar\" closeButton=\"%@\" "
      @"doubleClick2Close=\"%@\" reduce=\"yes\" dragAndDrop=\"yes\" "
      @"drawTopBar=\"yes\" drawInactiveTab=\"yes\" "
-     @"pinButton=\"yes\" tabCompactLabelLen=\"%ld\" />\n",
-     _yn(tabClose), _yn(dblClickClose), (long)tabMaxW];
+     @"pinButton=\"yes\" multiLine=\"%@\" tabCompactLabelLen=\"%ld\" />\n",
+     _yn(tabClose), _yn(dblClickClose), _yn(tabBarWrap), (long)tabMaxW];
 
     // TabSetting (global)
     [xml appendFormat:@"        <GUIConfig name=\"TabSetting\" replaceBySpace=\"%@\" size=\"%ld\" />\n",
@@ -509,6 +512,8 @@ void readConfigXML(void) {
                 [ud setBool:_ynBool(v) forKey:kPrefTabCloseButton];
             if ((v = [el attributeForName:@"doubleClick2Close"].stringValue))
                 [ud setBool:_ynBool(v) forKey:kPrefDoubleClickTabClose];
+            if ((v = [el attributeForName:@"multiLine"].stringValue))
+                [ud setBool:_ynBool(v) forKey:kPrefTabBarWrap];
             if ((v = [el attributeForName:@"tabCompactLabelLen"].stringValue))
                 [ud setInteger:v.integerValue forKey:kPrefTabMaxLabelWidth];
         }
@@ -1458,6 +1463,10 @@ static NSDictionary<NSString *, NSArray *> *toolbarGroupMap(void) {
     BOOL _showIndentGuides;
     BOOL _showLineNumbers;
 
+    // Ctrl + scroll-wheel zoom
+    id      _scrollZoomEventMonitor;
+    CGFloat _scrollZoomAccumulator;
+
     // Scroll synchronization
     BOOL _syncVerticalScrolling;
     BOOL _syncHorizontalScrolling;
@@ -1540,11 +1549,66 @@ static NSDictionary<NSString *, NSArray *> *toolbarGroupMap(void) {
                                                         selector:@selector(autoSaveTick:)
                                                         userInfo:nil
                                                          repeats:YES];
+        [self _installScrollZoomMonitor];
     }
     return self;
 }
 
+- (void)_installScrollZoomMonitor {
+    __weak typeof(self) weakSelf = self;
+    _scrollZoomEventMonitor =
+        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel
+                                              handler:^NSEvent *(NSEvent *event) {
+        // Only intercept Control + scroll
+        if (!(event.modifierFlags & NSEventModifierFlagControl)) return event;
+
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self) return event;
+
+        // addLocalMonitorForEventsMatchingMask is APP-WIDE — every
+        // MainWindowController's monitor sees every scroll event in
+        // any window. event.locationInWindow is in the *originating*
+        // window's coord space; converting it via self.window.contentView
+        // when event.window != self.window yields a meaningless point
+        // that can spuriously hit-test to an EditorView in self.window
+        // and trigger zoom in the wrong window. Bail early when the
+        // event isn't for us. (Also covers events from FloatingPanelWindow
+        // pop-out side-panels and the Find window.)
+        if (event.window != self.window) return event;
+
+        // Confirm the pointer is over one of our editor views
+        NSPoint loc = [self.window.contentView convertPoint:event.locationInWindow fromView:nil];
+        NSView *hit = [self.window.contentView hitTest:loc];
+        BOOL inEditor = NO;
+        for (NSView *v = hit; v; v = v.superview) {
+            if ([v isKindOfClass:[EditorView class]]) { inEditor = YES; break; }
+        }
+        if (!inEditor) return event;
+
+        CGFloat delta;
+        if (event.hasPreciseScrollingDeltas) {
+            // Trackpad: accumulate small per-event deltas; fire once per threshold crossed
+            self->_scrollZoomAccumulator += event.scrollingDeltaY;
+            if (fabs(self->_scrollZoomAccumulator) < 8.0) return nil;
+            delta = self->_scrollZoomAccumulator;
+            self->_scrollZoomAccumulator = 0.0;
+        } else {
+            // Discrete mouse wheel: one notch = one zoom step
+            delta = event.deltaY;
+        }
+
+        if      (delta > 0) [self zoomIn:nil];
+        else if (delta < 0) [self zoomOut:nil];
+
+        return nil; // consume — do not scroll the editor
+    }];
+}
+
 - (void)dealloc {
+    if (_scrollZoomEventMonitor) {
+        [NSEvent removeMonitor:_scrollZoomEventMonitor];
+        _scrollZoomEventMonitor = nil;
+    }
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
@@ -1583,6 +1647,16 @@ static NSDictionary<NSString *, NSArray *> *toolbarGroupMap(void) {
     tb.delegate = self;
     tb.allowsUserCustomization = NO;
     tb.displayMode = NSToolbarDisplayModeIconOnly;
+    // Issue #26: each NSToolbarItem in our setup wraps a multi-button custom
+    // view, not a single labelled button — so there's no per-item label to
+    // render in "Icon and Text" mode. Hide the display-mode picker from the
+    // toolbar's right-click context menu so users can't pick a mode that
+    // would only render empty space below the icons. See
+    // docs/issue-26-toolbar-icon-and-text.md for the full analysis. Will be
+    // re-enabled when toolbar is refactored to one NSToolbarItem per button.
+    if (@available(macOS 13.0, *)) {
+        tb.allowsDisplayModeCustomization = NO;
+    }
     self.window.toolbar = tb;
     // Expanded style puts the toolbar in its own row below the title bar,
     // so items are always left-aligned (not scattered around a centered title).
@@ -2255,9 +2329,18 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     _tbIndentGuide.toggledOn = _showIndentGuides;
     [_tbIndentGuide setNeedsDisplay:YES];
 
-    // Word Wrap (blue highlight)
-    EditorView *wrapEd = [self currentEditor];
-    _tbWrap.toggledOn = wrapEd && wrapEd.wordWrapEnabled;
+    // Word Wrap (blue highlight). Read kPrefWordWrap directly rather
+    // than the focused editor's wordWrapEnabled to avoid a notification
+    // observer-order race: when the user toggles the Preferences > Editor
+    // checkbox, prefChanged: posts NPPPreferencesChanged and MWC's
+    // observer (registered before any EditorView's observer) runs first.
+    // At that moment the editor's _wordWrapEnabled ivar still holds the
+    // old value because applyPreferencesFromDefaults hasn't run yet on
+    // that editor. The pref, however, was written synchronously before
+    // the notification was posted, so it's always current. Both UI
+    // surfaces (toolbar/menu toggle path and Preferences-pane path)
+    // write the pref first, so it's the authoritative cross-source.
+    _tbWrap.toggledOn = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefWordWrap];
     [_tbWrap setNeedsDisplay:YES];
 
     // Panel toggles (blue highlight when panel is visible)
@@ -2307,7 +2390,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
 
 - (void)_tabControlNew:(id)sender {
     [_activeTabManager addNewTab];
-    [self.window makeFirstResponder:[_activeTabManager currentEditor].scintillaView];
+    [self.window makeFirstResponder:[_activeTabManager currentEditor].scintillaView.content];
 }
 
 - (void)_tabControlList:(id)sender {
@@ -2359,7 +2442,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     if (idx != NSNotFound) {
         _activeTabManager = tm;
         [tm selectTabAtIndex:idx];
-        [self.window makeFirstResponder:ed.scintillaView];
+        [self.window makeFirstResponder:ed.scintillaView.content];
     }
 }
 
@@ -2380,6 +2463,9 @@ static BOOL groupHasTrailingSep(NSString *ident) {
 
     NppTabBar *primaryTabBar = _tabManager.tabBar;
     primaryTabBar.translatesAutoresizingMaskIntoConstraints = NO;
+    primaryTabBar.wrapMode = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefTabBarWrap];
+    [primaryTabBar setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
+    [primaryTabBar setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
     NSView *primaryContentView = _tabManager.contentView;
     primaryContentView.translatesAutoresizingMaskIntoConstraints = NO;
 
@@ -2392,7 +2478,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         [primaryTabBar.topAnchor constraintEqualToAnchor:primaryContainer.topAnchor],
         [primaryTabBar.leadingAnchor constraintEqualToAnchor:primaryContainer.leadingAnchor],
         [primaryTabBar.trailingAnchor constraintEqualToAnchor:primaryContainer.trailingAnchor],
-        [primaryTabBar.heightAnchor constraintEqualToConstant:25],
+        [primaryTabBar.heightAnchor constraintGreaterThanOrEqualToConstant:25],
         [primaryContentView.topAnchor constraintEqualToAnchor:primaryTabBar.bottomAnchor],
         [primaryContentView.leadingAnchor constraintEqualToAnchor:primaryContainer.leadingAnchor],
         [primaryContentView.trailingAnchor constraintEqualToAnchor:primaryContainer.trailingAnchor],
@@ -2405,6 +2491,9 @@ static BOOL groupHasTrailingSep(NSString *ident) {
 
     NppTabBar *subTabBar = _subTabManagerH.tabBar;
     subTabBar.translatesAutoresizingMaskIntoConstraints = NO;
+    subTabBar.wrapMode = primaryTabBar.wrapMode;
+    [subTabBar setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
+    [subTabBar setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
     NSView *subContentView = _subTabManagerH.contentView;
     subContentView.translatesAutoresizingMaskIntoConstraints = NO;
 
@@ -2416,7 +2505,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         [subTabBar.topAnchor constraintEqualToAnchor:_subEditorContainerH.topAnchor],
         [subTabBar.leadingAnchor constraintEqualToAnchor:_subEditorContainerH.leadingAnchor],
         [subTabBar.trailingAnchor constraintEqualToAnchor:_subEditorContainerH.trailingAnchor],
-        [subTabBar.heightAnchor constraintEqualToConstant:25],
+        [subTabBar.heightAnchor constraintGreaterThanOrEqualToConstant:25],
         [subContentView.topAnchor constraintEqualToAnchor:subTabBar.bottomAnchor],
         [subContentView.leadingAnchor constraintEqualToAnchor:_subEditorContainerH.leadingAnchor],
         [subContentView.trailingAnchor constraintEqualToAnchor:_subEditorContainerH.trailingAnchor],
@@ -2429,6 +2518,9 @@ static BOOL groupHasTrailingSep(NSString *ident) {
 
     NppTabBar *subTabBarV = _subTabManagerV.tabBar;
     subTabBarV.translatesAutoresizingMaskIntoConstraints = NO;
+    subTabBarV.wrapMode = primaryTabBar.wrapMode;
+    [subTabBarV setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
+    [subTabBarV setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
     NSView *subContentViewV = _subTabManagerV.contentView;
     subContentViewV.translatesAutoresizingMaskIntoConstraints = NO;
 
@@ -2440,7 +2532,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         [subTabBarV.topAnchor constraintEqualToAnchor:_subEditorContainerV.topAnchor],
         [subTabBarV.leadingAnchor constraintEqualToAnchor:_subEditorContainerV.leadingAnchor],
         [subTabBarV.trailingAnchor constraintEqualToAnchor:_subEditorContainerV.trailingAnchor],
-        [subTabBarV.heightAnchor constraintEqualToConstant:25],
+        [subTabBarV.heightAnchor constraintGreaterThanOrEqualToConstant:25],
         [subContentViewV.topAnchor constraintEqualToAnchor:subTabBarV.bottomAnchor],
         [subContentViewV.leadingAnchor constraintEqualToAnchor:_subEditorContainerV.leadingAnchor],
         [subContentViewV.trailingAnchor constraintEqualToAnchor:_subEditorContainerV.trailingAnchor],
@@ -2529,6 +2621,13 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     [[NSNotificationCenter defaultCenter]
         addObserver:self selector:@selector(_refreshOpenPanelTitles)
                name:NPPLocalizationChanged object:nil];
+    // Universal-in-session word wrap. Cross-window broadcast: when ANY
+    // MainWindowController toggles wrap, every other one observes here
+    // and propagates the new state to its own tab managers, so all
+    // editors in all windows stay in sync.
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self selector:@selector(_wordWrapSessionChanged:)
+               name:@"NPPWordWrapSessionChanged" object:nil];
 
     // ── Horizontal (left/right) split: views | side panels ────────────────────
     _sidePanelHost = [[SidePanelHost alloc] init];
@@ -2723,6 +2822,15 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         [tabs addObject:info];
     }
 
+    // Issue #87 — don't overwrite session.plist with an empty session.
+    // The loop above skips unmodified untitled tabs, so a window that only
+    // holds the default empty buffer produces tabs.count == 0. Writing that
+    // would destructively erase any previously-saved session — which manifests
+    // when the user toggles "Remember session" OFF, quits (save skipped, file
+    // preserved), relaunches (1 default tab), toggles back ON, then quits:
+    // without this guard the toggle-on quit would wipe the preserved session.
+    if (tabs.count == 0) return;
+
     NSDictionary *session = @{
         @"tabs":          tabs,
         @"selectedIndex": @(_tabManager.tabBar.selectedIndex)
@@ -2781,26 +2889,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         if (lang.length) [ed setLanguage:lang];
         [_tabManager refreshCurrentTabTitle];
 
-        // ── Restore cursor, selection, scroll state ──
         ScintillaView *sci = ed.scintillaView;
-        NSNumber *startPos = info[@"startPos"];
-        NSNumber *endPos   = info[@"endPos"];
-        if (startPos && endPos) {
-            NSInteger selMode = [info[@"selMode"] integerValue];
-            if (selMode > 0)
-                [sci message:SCI_SETSELECTIONMODE wParam:(uptr_t)selMode];
-            [sci message:SCI_SETANCHOR     wParam:0 lParam:startPos.longLongValue];
-            [sci message:SCI_SETCURRENTPOS wParam:0 lParam:endPos.longLongValue];
-        }
-        NSNumber *scrollWidth = info[@"scrollWidth"];
-        if (scrollWidth && scrollWidth.longLongValue > 1)
-            [sci message:SCI_SETSCROLLWIDTH wParam:(uptr_t)scrollWidth.longLongValue];
-        NSNumber *xOffset = info[@"xOffset"];
-        if (xOffset)
-            [sci message:SCI_SETXOFFSET wParam:(uptr_t)xOffset.longLongValue];
-        NSNumber *firstVisLine = info[@"firstVisibleLine"];
-        if (firstVisLine)
-            [sci message:SCI_SETFIRSTVISIBLELINE wParam:(uptr_t)firstVisLine.longLongValue];
 
         // ── Restore encoding ──
         // (encoding is set during loadFileAtPath: based on BOM detection;
@@ -2825,7 +2914,9 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         for (NSNumber *bkLine in bookmarks)
             [sci message:SCI_MARKERADD wParam:(uptr_t)bkLine.longLongValue lParam:20]; // kBookmarkMarker=20
 
-        // ── Restore fold state ──
+        // ── Restore fold state (BEFORE caret so a saved caret on a header
+        // line lands consistently with the display, and any later
+        // ENSUREVISIBLE call has the right fold context to expand). ──
         NSArray *folds = info[@"folds"];
         if (folds.count) {
             // Ensure fold levels are computed before applying fold state
@@ -2838,6 +2929,41 @@ static BOOL groupHasTrailingSep(NSString *ident) {
                     [sci message:SCI_TOGGLEFOLD wParam:(uptr_t)line];
             }
         }
+
+        // ── Restore cursor & selection ──
+        // SCI_SETSEL takes wParam=anchor, lParam=caret, atomically. Earlier
+        // code mistakenly used SCI_SETANCHOR/SCI_SETCURRENTPOS with the
+        // position in lParam (those take wParam=pos), so the saved offset
+        // never actually applied — every relaunch parked the caret at 0.
+        // Clamp against current document length in case the file shrank
+        // since the session was saved.
+        NSNumber *startPos = info[@"startPos"];
+        NSNumber *endPos   = info[@"endPos"];
+        if (startPos && endPos) {
+            sptr_t docLen = [sci message:SCI_GETLENGTH];
+            sptr_t anchor = MAX((sptr_t)0, MIN((sptr_t)startPos.longLongValue, docLen));
+            sptr_t caret  = MAX((sptr_t)0, MIN((sptr_t)endPos.longLongValue,   docLen));
+            NSInteger selMode = [info[@"selMode"] integerValue];
+            if (selMode > 0)
+                [sci message:SCI_SETSELECTIONMODE wParam:(uptr_t)selMode];
+            [sci message:SCI_SETSEL wParam:(uptr_t)anchor lParam:(sptr_t)caret];
+            // If the caret line sits inside a still-collapsed fold,
+            // expand the enclosing folds so the caret is reachable.
+            sptr_t caretLine = [sci message:SCI_LINEFROMPOSITION wParam:(uptr_t)caret];
+            [sci message:SCI_ENSUREVISIBLEENFORCEPOLICY wParam:(uptr_t)caretLine];
+        }
+
+        // ── Restore scroll position (last, so saved firstVisibleLine wins
+        // over the implicit scroll caused by ENSUREVISIBLE above). ──
+        NSNumber *scrollWidth = info[@"scrollWidth"];
+        if (scrollWidth && scrollWidth.longLongValue > 1)
+            [sci message:SCI_SETSCROLLWIDTH wParam:(uptr_t)scrollWidth.longLongValue];
+        NSNumber *xOffset = info[@"xOffset"];
+        if (xOffset)
+            [sci message:SCI_SETXOFFSET wParam:(uptr_t)xOffset.longLongValue];
+        NSNumber *firstVisLine = info[@"firstVisibleLine"];
+        if (firstVisLine)
+            [sci message:SCI_SETFIRSTVISIBLELINE wParam:(uptr_t)firstVisLine.longLongValue];
 
         opened++;
     }
@@ -3034,6 +3160,29 @@ static void removeMacroFromShortcutsXML(NSString *name) {
     [_tabManager openFileAtPath:path];
     [self addToRecentFiles:path];
     [self updateTitle];
+}
+
+// Issue #63: macOS routes Finder "Open With…" / drag-drop / double-click
+// events to NSApplicationDelegate's openFile(s) handlers regardless of
+// window state. Without an explicit deminiaturize + activate the file is
+// silently added to a tab inside a window that stays in the Dock — users
+// see no feedback and have to hunt for the Dock icon. This helper is the
+// single canonical "give the user back their window" sequence:
+//
+//   • activateIgnoringOtherApps:YES — pulls focus away from Finder.
+//   • deminiaturize: if currently minimized — pops the window out of the
+//     Dock with the standard genie animation.
+//   • makeKeyAndOrderFront: — covers the secondary cases too: window
+//     hidden via NSApplication's hide: (Cmd-H), or app simply
+//     backgrounded but visible. Idempotent for already-front windows.
+//
+// We deliberately do NOT call orderedIndex/orderFront chains; those add
+// nothing here and risk reordering documents when multiple windows are
+// open in a future multi-window setup.
+- (void)bringWindowForward {
+    [NSApp activateIgnoringOtherApps:YES];
+    if (self.window.miniaturized) [self.window deminiaturize:nil];
+    [self.window makeKeyAndOrderFront:nil];
 }
 
 #pragma mark - Recent Files
@@ -3494,19 +3643,49 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     conflictLabel.maximumNumberOfLines = 2;
     [cv addSubview:conflictLabel];
 
-    // Live conflict check — reuse ShortcutMapper's logic
+    // OK / Cancel — created before the checkConflict block so the block
+    // can hold a strong reference and toggle btnOK.enabled live as the
+    // user changes modifiers / key. This pairs with the conflict label
+    // to make collisions impossible to silently bypass: warning text +
+    // disabled OK = the user must clear or pick a non-conflicting
+    // shortcut before they can save the macro.
+    NSButton *btnOK = [[NSButton alloc] initWithFrame:NSMakeRect(195, 12, 90, 28)];
+    btnOK.title = [[NppLocalizer shared] translate:@"OK"];
+    btnOK.bezelStyle = NSBezelStyleRounded;
+    btnOK.keyEquivalent = @"\r";
+    btnOK.target = NSApp;
+    btnOK.action = @selector(stopModal);
+    [cv addSubview:btnOK];
+
+    NSButton *btnCancel = [[NSButton alloc] initWithFrame:NSMakeRect(293, 12, 90, 28)];
+    btnCancel.title = [[NppLocalizer shared] translate:@"Cancel"];
+    btnCancel.bezelStyle = NSBezelStyleRounded;
+    btnCancel.keyEquivalent = @"\033";
+    btnCancel.target = NSApp;
+    btnCancel.action = @selector(abortModal);
+    [cv addSubview:btnCancel];
+
+    // Live conflict check — walks every top-level menu (including the
+    // App menu so ⌘H / ⌘Q / ⌘, are caught) and flags items that share
+    // the candidate modifier+key combo.
     void (^checkConflict)(void) = ^{
         NSString *keyName = keyPopup.titleOfSelectedItem;
-        if ([keyName isEqualToString:@"None"]) { conflictLabel.stringValue = @""; return; }
+        if ([keyName isEqualToString:@"None"]) {
+            conflictLabel.stringValue = @"";
+            btnOK.enabled = YES;          // no key → no possible conflict
+            return;
+        }
         NSUInteger keyCode = 0;
         if (keyName.length == 1) keyCode = [keyName characterAtIndex:0];
         else if ([keyName hasPrefix:@"F"]) keyCode = 111 + [keyName substringFromIndex:1].intValue;
-        if (keyCode == 0) { conflictLabel.stringValue = @""; return; }
+        if (keyCode == 0) {
+            conflictLabel.stringValue = @"";
+            btnOK.enabled = YES;
+            return;
+        }
 
         // Walk all menus checking for conflicts
-        BOOL conflict = NO;
         NSMutableString *msg = [NSMutableString string];
-        void (^checkMenu)(NSMenu *, NSString *) = ^(NSMenu *menu, NSString *cat) {};
         __block void (^checkMenuBlock)(NSMenu *, NSString *);
         checkMenuBlock = ^(NSMenu *menu, NSString *cat) {
             for (NSMenuItem *mi in menu.itemArray) {
@@ -3536,9 +3715,11 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         if (msg.length) {
             conflictLabel.textColor = [NSColor systemRedColor];
             conflictLabel.stringValue = msg;
+            btnOK.enabled = NO;          // collision → block save
         } else {
             conflictLabel.textColor = [NSColor secondaryLabelColor];
             conflictLabel.stringValue = [[NppLocalizer shared] translate:@"No shortcut conflicts."];
+            btnOK.enabled = YES;
         }
     };
 
@@ -3557,22 +3738,8 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     keyPopup.action = @selector(main);
     [targetOps addObject:keyOp];
 
-    // OK / Cancel
-    NSButton *btnOK = [[NSButton alloc] initWithFrame:NSMakeRect(195, 12, 90, 28)];
-    btnOK.title = [[NppLocalizer shared] translate:@"OK"];
-    btnOK.bezelStyle = NSBezelStyleRounded;
-    btnOK.keyEquivalent = @"\r";
-    btnOK.target = NSApp;
-    btnOK.action = @selector(stopModal);
-    [cv addSubview:btnOK];
-
-    NSButton *btnCancel = [[NSButton alloc] initWithFrame:NSMakeRect(293, 12, 90, 28)];
-    btnCancel.title = [[NppLocalizer shared] translate:@"Cancel"];
-    btnCancel.bezelStyle = NSBezelStyleRounded;
-    btnCancel.keyEquivalent = @"\033";
-    btnCancel.target = NSApp;
-    btnCancel.action = @selector(abortModal);
-    [cv addSubview:btnCancel];
+    // Initial check (also sets btnOK.enabled to its starting state)
+    checkConflict();
 
     NSModalResponse resp = [NSApp runModalForWindow:panel];
     [panel orderOut:nil];
@@ -4174,6 +4341,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     _tabManager.tabBar.wrapMode     = newWrap;
     _subTabManagerH.tabBar.wrapMode = newWrap;
     _subTabManagerV.tabBar.wrapMode = newWrap;
+    [[NSUserDefaults standardUserDefaults] setBool:newWrap forKey:kPrefTabBarWrap];
 }
 
 #pragma mark - Sort Tabs
@@ -4414,7 +4582,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
 
     // Tab Wrap checkmark
     if (action == @selector(toggleTabBarWrap:)) {
-        [(NSMenuItem *)item setState:_tabManager.tabBar.wrapMode
+        [(NSMenuItem *)item setState:[[NSUserDefaults standardUserDefaults] boolForKey:kPrefTabBarWrap]
             ? NSControlStateValueOn : NSControlStateValueOff];
         return YES;
     }
@@ -4693,7 +4861,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     } completionHandler:^{
         self->_incSearchBar.hidden = YES;
     }];
-    [self.window makeFirstResponder:ed.scintillaView];
+    [self.window makeFirstResponder:ed.scintillaView.content];
 }
 
 // ── Change History ────────────────────────────────────────────────────────────
@@ -5118,7 +5286,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     for (int i = 0; i < 3; i++) {
         TabManager *tm = candidates[i];
         if (tm != _activeTabManager && tm.allEditors.count > 0) {
-            [self.window makeFirstResponder:tm.currentEditor.scintillaView];
+            [self.window makeFirstResponder:tm.currentEditor.scintillaView.content];
             _activeTabManager = tm;
             return;
         }
@@ -5369,10 +5537,55 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
 
 #pragma mark - View menu actions
 
+// Universal-in-session word wrap. The toggle:
+//
+//   1. Computes new state from focused editor.
+//   2. Writes kPrefWordWrap so newly-opened tabs (Cmd+N, drag-drop,
+//      session restore) inherit the same state via
+//      EditorView.applyPreferencesFromDefaults.
+//   3. Propagates to every editor in this window's three tab managers.
+//   4. Posts NPPWordWrapSessionChanged with object:self so other open
+//      windows propagate to their own editors. The receiver filters out
+//      its own broadcasts via the object check (see
+//      _wordWrapSessionChanged:).
+//
+// kPrefWordWrap is reset to NO at the top of
+// applicationDidFinishLaunching: so the pref is a transient broadcast
+// channel only — there is no persistence across launches.
+//
+// RTL editors (those that have Text Direction = RTL) are SKIPPED when
+// turning wrap OFF: RTL forces wrap on for layout reasons (see
+// EditorView.setTextDirectionRTL:), and turning it off would leave them
+// with wrong line lengths. The existing _savedWrapBeforeRTL machinery
+// in EditorView handles wrap-state restore on RTL→LTR switch.
 - (void)toggleWordWrap:(id)sender {
     EditorView *ed = [self currentEditor];
     if (!ed) return;
-    ed.wordWrapEnabled = !ed.wordWrapEnabled;
+    BOOL newState = !ed.wordWrapEnabled;
+    [[NSUserDefaults standardUserDefaults] setBool:newState forKey:kPrefWordWrap];
+    [self _propagateWordWrap:newState];
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:@"NPPWordWrapSessionChanged" object:self];
+    [self _refreshToolbarStates];
+}
+
+- (void)_propagateWordWrap:(BOOL)enabled {
+    for (TabManager *mgr in @[_tabManager, _subTabManagerH, _subTabManagerV]) {
+        for (EditorView *ed in mgr.allEditors) {
+            // RTL needs wrap on for proper layout — skip the OFF case.
+            if (ed.isTextDirectionRTL && !enabled) continue;
+            ed.wordWrapEnabled = enabled;
+        }
+    }
+}
+
+// Fired when ANOTHER MainWindowController toggles wrap. We filter out our
+// own broadcasts via note.object (toggleWordWrap: posts with object:self)
+// so we don't double-apply / re-broadcast.
+- (void)_wordWrapSessionChanged:(NSNotification *)note {
+    if (note.object == self) return;
+    BOOL enabled = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefWordWrap];
+    [self _propagateWordWrap:enabled];
     [self _refreshToolbarStates];
 }
 
@@ -5389,14 +5602,38 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     return nil;
 }
 
+/// Issue #72 — universal-in-window zoom. After the focused editor's zoom
+/// changes, force every other editor in this window to the same zoom so
+/// switching tabs (and split-view editors) doesn't surprise the user with
+/// a different size. Matches Notepad++ Windows behaviour.
+///
+/// Scoped to ONE window: separate MainWindowController instances each
+/// fan-out within their own three tab managers only. That keeps a "small
+/// reference window + large editing window" workflow possible.
+///
+/// Targeted on purpose — we don't post NPPPreferencesChanged because that
+/// would re-apply *every* preference (line numbers, caret style, theme
+/// colours, autocomplete, …) on every zoom, which is wasteful. We only
+/// need SCI_SETZOOM. Plugin / Document Map / Function-List / etc. panels
+/// are excluded because they're not in the editor tab managers; they
+/// keep their own independent zoom state via panelZoomIn / kPrefPanelZoom_*.
+- (void)_propagateEditorZoom:(NSInteger)zoom {
+    for (TabManager *mgr in @[_tabManager, _subTabManagerH, _subTabManagerV]) {
+        for (EditorView *ed in mgr.allEditors) {
+            [ed.scintillaView message:SCI_SETZOOM wParam:(uptr_t)zoom];
+        }
+    }
+}
+
 - (void)zoomIn:(id)sender {
     NSView *panel = [self _focusedZoomablePanel];
     if (panel) { [panel performSelector:@selector(panelZoomIn)]; return; }
     EditorView *ed = [self focusedEditor];
     if (!ed) return;
     [ed.scintillaView message:SCI_ZOOMIN];
-    [[NSUserDefaults standardUserDefaults]
-        setInteger:[ed.scintillaView message:SCI_GETZOOM] forKey:kPrefZoomLevel];
+    NSInteger zoom = [ed.scintillaView message:SCI_GETZOOM];
+    [[NSUserDefaults standardUserDefaults] setInteger:zoom forKey:kPrefZoomLevel];
+    [self _propagateEditorZoom:zoom];
 }
 
 - (void)zoomOut:(id)sender {
@@ -5405,8 +5642,9 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     EditorView *ed = [self focusedEditor];
     if (!ed) return;
     [ed.scintillaView message:SCI_ZOOMOUT];
-    [[NSUserDefaults standardUserDefaults]
-        setInteger:[ed.scintillaView message:SCI_GETZOOM] forKey:kPrefZoomLevel];
+    NSInteger zoom = [ed.scintillaView message:SCI_GETZOOM];
+    [[NSUserDefaults standardUserDefaults] setInteger:zoom forKey:kPrefZoomLevel];
+    [self _propagateEditorZoom:zoom];
 }
 
 - (void)resetZoom:(id)sender {
@@ -5416,6 +5654,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     if (!ed) return;
     [ed.scintillaView message:SCI_SETZOOM wParam:0];
     [[NSUserDefaults standardUserDefaults] setInteger:0 forKey:kPrefZoomLevel];
+    [self _propagateEditorZoom:0];
 }
 
 - (void)toggleShowAllChars:(id)sender {
@@ -5779,14 +6018,14 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
 /// Inserts them after the last separator in the Language menu
 /// (below the static Markdown preinstalled entries).
 - (void)rebuildUDLLanguageMenu {
-    // Find the Language menu
-    NSMenu *langMenu = nil;
-    for (NSMenuItem *topItem in [NSApp mainMenu].itemArray) {
-        if ([topItem.submenu.title isEqualToString:@"Language"]) {
-            langMenu = topItem.submenu;
-            break;
-        }
-    }
+    // Look up the Language top-level menu by tag, not by its English title:
+    // when the active UI language is non-English the title is translated
+    // (e.g. "Синтаксисы" / "Мова" / "Langage"), and an
+    // isEqualToString:@"Language" check would silently miss and skip the
+    // entire UDL insertion — losing every ~/.notepad++/userDefineLangs/
+    // entry from the menu.
+    NSMenuItem *langTop = [[NSApp mainMenu] itemWithTag:kMenuTagLanguage];
+    NSMenu *langMenu = langTop.submenu;
     if (!langMenu) return;
 
     // Remove any previously-added UDL items (tagged with 8800)
@@ -5953,7 +6192,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         ctx.duration = 0.12;
         self->_findPanelHeightConstraint.animator.constant = 0;
     } completionHandler:^{ self->_findPanel.hidden = YES; }];
-    [self.window makeFirstResponder:[self currentEditor].scintillaView];
+    [self.window makeFirstResponder:[self currentEditor].scintillaView.content];
 }
 
 #pragma mark - NSSplitViewDelegate
@@ -6115,8 +6354,11 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
 - (void)tabManager:(id)tabManager didSelectEditor:(EditorView *)editor {
     _activeTabManager = tabManager;
     // Give the editor keyboard focus so the old pane's caret stops blinking
-    // and SCN_FOCUSIN fires on the correct editor.
-    [self.window makeFirstResponder:editor.scintillaView];
+    // and SCN_FOCUSIN fires on the correct editor. Target the SCIContentView
+    // (`.content`), not the outer ScintillaView NSView wrapper — only the
+    // content view is in Scintilla's keyDown: chain, so making the wrapper
+    // first responder leaves typing dead until the user clicks in the editor.
+    [self.window makeFirstResponder:editor.scintillaView.content];
 
     // Notify plugins that a different buffer is now active
     [[NppPluginManager shared] notifyPluginsWithCode:NPPN_BUFFERACTIVATED
@@ -6739,6 +6981,10 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
                                              backing:NSBackingStoreBuffered
                                                defer:NO];
         panel.title = [[NppLocalizer shared] translate:@"Run..."];
+        // Identifier is NOT translated, so _runDlgVariableSelected: can
+        // find this window again across language switches. The title
+        // alone would break the lookup in any non-English locale.
+        panel.identifier = @"NPPRunDialog";
         panel.releasedWhenClosed = NO;
         panel.hidesOnDeactivate = NO;
         NSView *v = panel.contentView;
@@ -6862,10 +7108,12 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
 /// Variable menu item selected — insert into combo box
 - (void)_runDlgVariableSelected:(NSMenuItem *)mi {
     NSString *var = [NSString stringWithFormat:@"$(%@)", mi.representedObject];
-    // Find the combo box
+    // Look the Run dialog up by identifier rather than title — the title
+    // is translated to the active UI language ("Запустить...", "Exécuter…",
+    // …) and would silently fail to match the English literal.
     NSComboBox *combo = nil;
     for (NSWindow *w in [NSApp windows])
-        if ([w.title isEqualToString:@"Run..."]) {
+        if ([w.identifier isEqualToString:@"NPPRunDialog"]) {
             for (NSView *sub in w.contentView.subviews)
                 if ([sub isKindOfClass:[NSComboBox class]]) { combo = (NSComboBox *)sub; break; }
             break;
@@ -7005,18 +7253,42 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     conflictLabel.maximumNumberOfLines = 2;
     [cv addSubview:conflictLabel];
 
+    // OK / Cancel — created early so the conflict-check block can hold a
+    // strong reference and toggle btnOK.enabled live (same gating pattern
+    // as the macro Save and Shortcut Mapper Modify dialogs).
+    NSButton *btnOK = [[NSButton alloc] initWithFrame:NSMakeRect(195, 12, 90, 28)];
+    btnOK.title = [[NppLocalizer shared] translate:@"OK"];
+    btnOK.bezelStyle = NSBezelStyleRounded;
+    btnOK.keyEquivalent = @"\r";
+    btnOK.target = NSApp;
+    btnOK.action = @selector(stopModal);
+    [cv addSubview:btnOK];
+
+    NSButton *btnCancel = [[NSButton alloc] initWithFrame:NSMakeRect(293, 12, 90, 28)];
+    btnCancel.title = [[NppLocalizer shared] translate:@"Cancel"];
+    btnCancel.bezelStyle = NSBezelStyleRounded;
+    btnCancel.keyEquivalent = @"\033";
+    btnCancel.target = NSApp;
+    btnCancel.action = @selector(abortModal);
+    [cv addSubview:btnCancel];
+
     // Live conflict check
     void (^checkConflict)(void) = ^{
         NSString *keyName = keyPopup.titleOfSelectedItem;
         if ([keyName isEqualToString:@"None"]) {
             conflictLabel.textColor = [NSColor secondaryLabelColor];
             conflictLabel.stringValue = @"";
+            btnOK.enabled = YES;
             return;
         }
         NSUInteger keyCode = 0;
         if (keyName.length == 1) keyCode = [keyName characterAtIndex:0];
         else if ([keyName hasPrefix:@"F"]) keyCode = 111 + [keyName substringFromIndex:1].intValue;
-        if (keyCode == 0) { conflictLabel.stringValue = @""; return; }
+        if (keyCode == 0) {
+            conflictLabel.stringValue = @"";
+            btnOK.enabled = YES;
+            return;
+        }
 
         NSMutableString *msg = [NSMutableString string];
         __block void (^checkMenuBlock)(NSMenu *, NSString *);
@@ -7047,9 +7319,11 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         if (msg.length) {
             conflictLabel.textColor = [NSColor systemRedColor];
             conflictLabel.stringValue = msg;
+            btnOK.enabled = NO;          // collision → block save
         } else {
             conflictLabel.textColor = [NSColor secondaryLabelColor];
             conflictLabel.stringValue = [[NppLocalizer shared] translate:@"No shortcut conflicts."];
+            btnOK.enabled = YES;
         }
     };
 
@@ -7068,22 +7342,8 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     keyPopup.action = @selector(main);
     [targetOps addObject:keyOp];
 
-    // OK / Cancel
-    NSButton *btnOK = [[NSButton alloc] initWithFrame:NSMakeRect(195, 12, 90, 28)];
-    btnOK.title = [[NppLocalizer shared] translate:@"OK"];
-    btnOK.bezelStyle = NSBezelStyleRounded;
-    btnOK.keyEquivalent = @"\r";
-    btnOK.target = NSApp;
-    btnOK.action = @selector(stopModal);
-    [cv addSubview:btnOK];
-
-    NSButton *btnCancel = [[NSButton alloc] initWithFrame:NSMakeRect(293, 12, 90, 28)];
-    btnCancel.title = [[NppLocalizer shared] translate:@"Cancel"];
-    btnCancel.bezelStyle = NSBezelStyleRounded;
-    btnCancel.keyEquivalent = @"\033";
-    btnCancel.target = NSApp;
-    btnCancel.action = @selector(abortModal);
-    [cv addSubview:btnCancel];
+    // Initial check (also sets btnOK.enabled to its starting state)
+    checkConflict();
 
     NSModalResponse resp = [NSApp runModalForWindow:panel];
     [panel orderOut:nil];
@@ -7278,6 +7538,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         rangeStartField.stringValue = @"0";
         rangeStartField.alignment = NSTextAlignmentCenter;
         rangeStartField.enabled = NO;  // disabled until Custom range selected
+        rangeStartField.tag = 5;       // looked up by tag in _findCharInRange:
         [v addSubview:rangeStartField];
 
         NSTextField *dash = [NSTextField labelWithString:@"\u2013"];
@@ -7288,6 +7549,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         rangeEndField.stringValue = @"255";
         rangeEndField.alignment = NSTextAlignmentCenter;
         rangeEndField.enabled = NO;  // disabled until Custom range selected
+        rangeEndField.tag = 6;
         [v addSubview:rangeEndField];
 
         // Direction group
@@ -7311,6 +7573,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         // Wrap around
         wrapCheck = [NSButton checkboxWithTitle:[[NppLocalizer shared] translate:@"Wrap around"] target:nil action:nil];
         wrapCheck.frame = NSMakeRect(185, y - 15, 120, 20);
+        wrapCheck.tag = 4;             // looked up by tag in _findCharInRange:
         [v addSubview:wrapCheck];
 
         // Find and Close buttons — horizontal at the bottom
@@ -7365,43 +7628,30 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     if (!ed) return;
     ScintillaView *sci = ed.scintillaView;
 
-    // Get the panel controls via the sender's window
+    // Look every control up by the tag we assigned at construction. The
+    // previous implementation scanned subviews by `title containsString:`
+    // / frame X-coordinate, which silently failed in any non-English UI
+    // language: every radio button title gets translated by NppLocalizer
+    // before this handler runs, so the comparisons returned all-nil and
+    // the dialog ran with default 0-255 + forward direction regardless
+    // of what the user actually picked.
+    //
+    // viewWithTag: walks the subview tree (including inside the
+    // NSBox direction group), so the flat lookup covers radio buttons,
+    // checkboxes, and text fields uniformly. Tags are assigned in
+    // showFindCharsInRange: above.
     NSPanel *panel = (NSPanel *)[sender window];
     NSView *v = panel.contentView;
 
-    // Find controls by walking subviews
-    NSButton *radioNonASCII = nil, *radioASCII = nil, *radioCustom = nil;
-    NSButton *radioDirUp = nil, *wrapCheck = nil;
-    NSTextField *rangeStartField = nil, *rangeEndField = nil;
-
-    for (NSView *sub in v.subviews) {
-        if ([sub isKindOfClass:[NSButton class]]) {
-            NSButton *btn = (NSButton *)sub;
-            if ([btn.title containsString:@"Non-ASCII"]) radioNonASCII = btn;
-            else if ([btn.title containsString:@"ASCII char"]) radioASCII = btn;
-            else if ([btn.title containsString:@"Custom"]) radioCustom = btn;
-            else if ([btn.title isEqualToString:@"Wrap around"]) wrapCheck = btn;
-        }
-        if ([sub isKindOfClass:[NSBox class]]) {
-            for (NSView *bs in sub.subviews) {
-                // NSBox content view
-                for (NSView *inner in bs.subviews) {
-                    if ([inner isKindOfClass:[NSButton class]]) {
-                        NSButton *btn = (NSButton *)inner;
-                        if ([btn.title isEqualToString:@"Up"]) radioDirUp = btn;
-                    }
-                }
-            }
-        }
-    }
-    // Find text fields (the small ones for custom range)
-    for (NSView *sub in v.subviews) {
-        if ([sub isKindOfClass:[NSTextField class]] && [(NSTextField *)sub isEditable]) {
-            NSTextField *tf = (NSTextField *)sub;
-            if (NSMinX(tf.frame) < 250) rangeStartField = tf;
-            else rangeEndField = tf;
-        }
-    }
+    NSButton    *radioNonASCII   = (NSButton *)   [v viewWithTag:1];
+    NSButton    *radioASCII      = (NSButton *)   [v viewWithTag:2];
+    // tag 3 is "Custom range" — its selection state is implicit (the
+    // fallback branch fires when neither NonASCII nor ASCII is on), so we
+    // don't need a reference to it here.
+    NSButton    *wrapCheck       = (NSButton *)   [v viewWithTag:4];
+    NSTextField *rangeStartField = (NSTextField *)[v viewWithTag:5];
+    NSTextField *rangeEndField   = (NSTextField *)[v viewWithTag:6];
+    NSButton    *radioDirUp      = (NSButton *)   [v viewWithTag:10];
 
     // Determine byte range
     unsigned char beginRange, endRange;
@@ -7640,7 +7890,7 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     tv.font = [NSFont fontWithName:@"Menlo" size:11];
     tv.string =
         @"Usage:\n\n"
-        @"notepad++ [--help] [-multiInst] [-noPlugin] [-lLanguage] [-udl=\"My UDL Name\"]\n"
+        @"nextpad++ [--help] [-multiInst] [-noPlugin] [-lLanguage] [-udl=\"My UDL Name\"]\n"
         @"[-LlangCode] [-nLineNumber] [-cColumnNumber] [-pPosition] [-xLeftPos] [-yTopPos]\n"
         @"[-monitor] [-nosession] [-notabbar] [-loadingTime] [-alwaysOnTop]\n"
         @"[-ro] [-fullReadOnly] [-fullReadOnlySavingForbidden] [-openSession] [-r]\n"
@@ -7681,8 +7931,16 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         @"-openFoldersAsWorkspace: Open filePath of folder(s) as workspace\n"
         @"-titleAdd=\"string\": Add string to Notepad++ title bar\n"
         @"filePath: File or folder name to open (absolute or relative path name)\n\n"
-        @"Note: On macOS, most CLI arguments are not yet implemented.\n"
-        @"Currently supported: filePath (open files via command line or Finder).";
+        @"Note (macOS): most flags above work as documented. Not yet "
+        @"implemented: -L, -settingsDir, and the Ghost-typing flags "
+        @"(-qn / -qt / -qf / -qSpeed). The -fullReadOnly and "
+        @"-fullReadOnlySavingForbidden flags currently behave like -ro.\n\n"
+        @"To use the 'nextpad++' command shown above, run "
+        @"App menu > 'Install nextpad++ Command Line Tool…'. Without "
+        @"the symlink you can still pass arguments via:\n"
+        @"  open -a Notepad++ --args -n42 file.txt\n"
+        @"or invoke the binary directly:\n"
+        @"  /Applications/Notepad++.app/Contents/MacOS/Notepad++ file.txt";
 
     scroll.documentView = tv;
     [panel.contentView addSubview:scroll];
@@ -7699,15 +7957,288 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     [panel orderOut:nil];
 }
 
+// ── Install command line tool ─────────────────────────────────────────────────
+// Quote a path for safe inclusion in a shell command run by AppleScript.
+// AppleScript already wraps the script in double-quotes so the inner shell
+// sees it as a normal POSIX command. We single-quote and escape any embedded
+// single quotes (`'` → `'\''`) to handle paths with arbitrary characters
+// including spaces, $, &, etc.
+static NSString *_shellQuote(NSString *path) {
+    NSString *escaped = [path stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"];
+    return [NSString stringWithFormat:@"'%@'", escaped];
+}
+
+// Build the bash wrapper script that gets installed as `nextpad++`. Routes
+// through `open -a` (LaunchServices) so the existing app instance is reused
+// and the terminal returns immediately — direct exec of the Mach-O binary
+// would attach NSLog to the user's terminal and leave it stuck. Relative
+// file paths are converted to absolute against the *terminal's* PWD before
+// being passed to `open --args`, since `open` runs the launched app from
+// `/` which would otherwise resolve `./file.txt` against the wrong cwd.
+static NSString *_makeCLIScriptForApp(NSString *appPath) {
+    return [NSString stringWithFormat:
+        @"#!/bin/bash\n"
+         "# nextpad++ — CLI wrapper for Notepad++ macOS\n"
+         "# Auto-generated by Notepad++.app — re-run the\n"
+         "# 'Install nextpad++ Command Line Tool…' menu item to update.\n"
+         "APP=%@\n"
+         "\n"
+         "# Convert relative file paths to absolute. `open --args` runs the\n"
+         "# app from / so unqualified paths would otherwise resolve wrong.\n"
+         "args=()\n"
+         "for arg in \"$@\"; do\n"
+         "    case \"$arg\" in\n"
+         "        -*) args+=(\"$arg\") ;;\n"
+         "        /*) args+=(\"$arg\") ;;\n"
+         "        *)  args+=(\"$PWD/$arg\") ;;\n"
+         "    esac\n"
+         "done\n"
+         "\n"
+         "if [ ${#args[@]} -eq 0 ]; then\n"
+         "    open -a \"$APP\"\n"
+         "else\n"
+         "    open -a \"$APP\" --args \"${args[@]}\"\n"
+         "fi\n",
+        _shellQuote(appPath)];
+}
+
+// Write `script` to `path` and chmod 0755. Removes any existing file/symlink
+// first so this works as both an upgrade (over the old direct-binary symlink)
+// and a fresh install.
+static BOOL _writeCLIScript(NSString *script, NSString *path, NSError **outErr) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm removeItemAtPath:path error:nil];
+    if (![script writeToFile:path
+                  atomically:YES
+                    encoding:NSUTF8StringEncoding
+                       error:outErr])
+        return NO;
+    return [fm setAttributes:@{NSFilePosixPermissions: @0755}
+                ofItemAtPath:path
+                       error:outErr];
+}
+
+// Creates /usr/local/bin/nextpad++ as a wrapper script that dispatches to the
+// running app via `open -a`. Earlier versions installed a direct symlink to
+// the Mach-O binary, which inherited the terminal's stdio (NSLog flooded the
+// terminal, prompt didn't return, didn't reuse the running app instance).
+// /usr/local/bin is on macOS's default PATH; falls back to ~/.local/bin if
+// the user declines admin auth.
+- (void)installCommandLineTool:(id)sender {
+    NSString *appPath = [NSBundle mainBundle].bundlePath;
+    if (!appPath.length) return;
+
+    NSString *systemTarget = @"/usr/local/bin/nextpad++";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *script = _makeCLIScriptForApp(appPath);
+
+    // Idempotency: existing file already targets this same .app?
+    NSString *existing = [NSString stringWithContentsOfFile:systemTarget
+                                                   encoding:NSUTF8StringEncoding
+                                                      error:nil];
+    NSString *appLine = [NSString stringWithFormat:@"APP=%@", _shellQuote(appPath)];
+    if (existing && [existing containsString:appLine]) {
+        NSAlert *a = [[NSAlert alloc] init];
+        a.messageText = [[NppLocalizer shared] translate:@"Already installed"];
+        a.informativeText = [NSString stringWithFormat:@"nextpad++ is already installed at %@\n\nUsage:\n  nextpad++ file.txt\n  nextpad++ -n42 main.cpp", systemTarget];
+        [a runModal];
+        return;
+    }
+
+    // Try /usr/local/bin without elevation (works if user owns the dir,
+    // typically Homebrew Intel installs).
+    NSError *err = nil;
+    BOOL ok = _writeCLIScript(script, systemTarget, &err);
+
+    if (!ok) {
+        // Need admin. Offer two paths.
+        NSAlert *prompt = [[NSAlert alloc] init];
+        prompt.messageText = [[NppLocalizer shared] translate:@"Install nextpad++ Command Line Tool"];
+        prompt.informativeText = [NSString stringWithFormat:
+            @"Where would you like to install the 'nextpad++' command?\n\n"
+             "• /usr/local/bin (in default PATH — requires administrator password)\n"
+             "• ~/.local/bin (no password — you may need to add it to your PATH)"];
+        [prompt addButtonWithTitle:@"/usr/local/bin"];
+        [prompt addButtonWithTitle:@"~/.local/bin"];
+        [prompt addButtonWithTitle:[[NppLocalizer shared] translate:@"Cancel"]];
+        NSModalResponse resp = [prompt runModal];
+
+        if (resp == NSAlertThirdButtonReturn) return; // Cancel
+
+        if (resp == NSAlertFirstButtonReturn) {
+            // Admin install: write the script to /tmp (no auth) and then
+            // privilege-escalate just the move + chmod. Avoids embedding
+            // multi-line script content inside a single AppleScript shell
+            // command, which would need fragile heredoc/escape gymnastics.
+            NSString *tmpPath = [NSString stringWithFormat:@"/tmp/nextpad++.cli.%d",
+                                 (int)getpid()];
+            NSError *werr = nil;
+            if (![script writeToFile:tmpPath atomically:YES
+                            encoding:NSUTF8StringEncoding error:&werr]) {
+                NSAlert *a = [[NSAlert alloc] init];
+                a.messageText = [[NppLocalizer shared] translate:@"Installation failed"];
+                a.informativeText = werr.localizedDescription ?: @"Could not stage temp file.";
+                [a runModal];
+                return;
+            }
+
+            NSString *aplScript = [NSString stringWithFormat:
+                @"do shell script \"mkdir -p /usr/local/bin && mv %@ %@ && chmod 755 %@\" with administrator privileges",
+                _shellQuote(tmpPath), _shellQuote(systemTarget), _shellQuote(systemTarget)];
+            NSDictionary *errInfo = nil;
+            [[[NSAppleScript alloc] initWithSource:aplScript] executeAndReturnError:&errInfo];
+            [fm removeItemAtPath:tmpPath error:nil]; // cleanup if mv didn't run
+
+            NSAlert *a = [[NSAlert alloc] init];
+            if (errInfo) {
+                a.messageText = [[NppLocalizer shared] translate:@"Installation failed"];
+                a.informativeText = errInfo[NSAppleScriptErrorMessage] ?: @"Unknown error.";
+            } else {
+                a.messageText = [[NppLocalizer shared] translate:@"Installed"];
+                a.informativeText = [NSString stringWithFormat:@"nextpad++ command installed at %@\n\nUsage:\n  nextpad++ file.txt\n  nextpad++ -n42 main.cpp", systemTarget];
+            }
+            [a runModal];
+            return;
+        }
+
+        // resp == NSAlertSecondButtonReturn — fallback to ~/.local/bin
+        NSString *userBinDir = [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin"];
+        [fm createDirectoryAtPath:userBinDir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *userTarget = [userBinDir stringByAppendingPathComponent:@"nextpad++"];
+        err = nil;
+        ok = _writeCLIScript(script, userTarget, &err);
+
+        if (!ok) {
+            NSAlert *a = [[NSAlert alloc] init];
+            a.messageText = [[NppLocalizer shared] translate:@"Installation failed"];
+            a.informativeText = err.localizedDescription ?: @"Unknown error.";
+            [a runModal];
+            return;
+        }
+
+        // Symlink succeeded. Decide PATH-status messaging.
+        NSString *pathEnv = NSProcessInfo.processInfo.environment[@"PATH"] ?: @"";
+        BOOL onPath = [[pathEnv componentsSeparatedByString:@":"] containsObject:userBinDir];
+
+        if (onPath) {
+            NSAlert *a = [[NSAlert alloc] init];
+            a.messageText = [[NppLocalizer shared] translate:@"Installed"];
+            a.informativeText = [NSString stringWithFormat:@"nextpad++ command installed at %@\n\nUsage:\n  nextpad++ file.txt\n  nextpad++ -n42 main.cpp", userTarget];
+            [a runModal];
+            return;
+        }
+
+        // Not on PATH — make this prominent and offer one-click fixes.
+        // Detect the user's shell from $SHELL and pick the right rc file.
+        NSString *shellPath = NSProcessInfo.processInfo.environment[@"SHELL"] ?: @"/bin/zsh";
+        NSString *shellName = shellPath.lastPathComponent;
+        NSString *configPath, *exportLine;
+        if ([shellName isEqualToString:@"bash"]) {
+            configPath = [NSHomeDirectory() stringByAppendingPathComponent:@".bash_profile"];
+            exportLine = @"export PATH=\"$HOME/.local/bin:$PATH\"";
+        } else if ([shellName isEqualToString:@"fish"]) {
+            configPath = [NSHomeDirectory() stringByAppendingPathComponent:@".config/fish/config.fish"];
+            exportLine = @"fish_add_path -U $HOME/.local/bin";
+        } else {
+            // zsh is macOS default since Catalina; everything else falls back here
+            configPath = [NSHomeDirectory() stringByAppendingPathComponent:@".zshrc"];
+            exportLine = @"export PATH=\"$HOME/.local/bin:$PATH\"";
+        }
+        NSString *configDisplay = [configPath stringByReplacingOccurrencesOfString:NSHomeDirectory() withString:@"~"];
+
+        NSAlert *a = [[NSAlert alloc] init];
+        a.alertStyle = NSAlertStyleWarning;
+        a.messageText = [[NppLocalizer shared] translate:
+            @"Installed — but ~/.local/bin is not on your PATH"];
+        a.informativeText = [NSString stringWithFormat:
+            @"nextpad++ is installed at %@, but typing 'nextpad++' in a "
+             "terminal will give 'command not found' until ~/.local/bin is "
+             "on your $PATH.\n\n"
+             "Add this line to %@:\n\n"
+             "    %@\n\n"
+             "Then open a new Terminal window. The buttons below can do "
+             "this for you.",
+            userTarget, configDisplay, exportLine];
+        [a addButtonWithTitle:[NSString stringWithFormat:@"Add to %@", configDisplay.lastPathComponent]];
+        [a addButtonWithTitle:@"Copy command"];
+        [a addButtonWithTitle:@"OK"];
+        NSModalResponse pathResp = [a runModal];
+
+        if (pathResp == NSAlertFirstButtonReturn) {
+            // Append the export line to the shell config file (idempotent).
+            NSString *current = [NSString stringWithContentsOfFile:configPath
+                                                          encoding:NSUTF8StringEncoding
+                                                             error:nil] ?: @"";
+            NSAlert *follow = [[NSAlert alloc] init];
+            if ([current rangeOfString:exportLine].location != NSNotFound) {
+                follow.messageText = [[NppLocalizer shared] translate:@"Already in your config"];
+                follow.informativeText = [NSString stringWithFormat:
+                    @"%@ already contains the export line. Open a new "
+                     "Terminal window for it to take effect.", configDisplay];
+            } else {
+                NSString *prefix = current.length && ![current hasSuffix:@"\n"] ? @"\n" : @"";
+                NSString *appended = [current stringByAppendingFormat:
+                    @"%@\n# Added by Notepad++ — nextpad++ CLI\n%@\n",
+                    prefix, exportLine];
+                NSError *werr = nil;
+                BOOL wrote = [appended writeToFile:configPath
+                                        atomically:YES
+                                          encoding:NSUTF8StringEncoding
+                                             error:&werr];
+                if (wrote) {
+                    follow.messageText = [[NppLocalizer shared] translate:@"Added to PATH"];
+                    follow.informativeText = [NSString stringWithFormat:
+                        @"Added the export line to %@. Open a new Terminal "
+                         "window for it to take effect — then 'nextpad++' "
+                         "will work.", configDisplay];
+                } else {
+                    follow.alertStyle = NSAlertStyleCritical;
+                    follow.messageText = [[NppLocalizer shared] translate:@"Could not write"];
+                    follow.informativeText = werr.localizedDescription ?: @"Unknown error.";
+                }
+            }
+            [follow runModal];
+        } else if (pathResp == NSAlertSecondButtonReturn) {
+            // Copy the export line to the clipboard.
+            NSPasteboard *pb = [NSPasteboard generalPasteboard];
+            [pb clearContents];
+            [pb setString:exportLine forType:NSPasteboardTypeString];
+            NSAlert *follow = [[NSAlert alloc] init];
+            follow.messageText = [[NppLocalizer shared] translate:@"Copied"];
+            follow.informativeText = [NSString stringWithFormat:
+                @"Paste this into %@ (or your shell config) and open a "
+                 "new Terminal window.", configDisplay];
+            [follow runModal];
+        }
+        return;
+    }
+
+    // Plain (non-elevated) install succeeded — user owns /usr/local/bin.
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = [[NppLocalizer shared] translate:@"Installed"];
+    a.informativeText = [NSString stringWithFormat:@"nextpad++ command installed at %@\n\nUsage:\n  nextpad++ file.txt\n  nextpad++ -n42 main.cpp", systemTarget];
+    [a runModal];
+}
+
 // ── Dark mode ────────────────────────────────────────────────────────────────
 
 - (void)_prefsChanged:(NSNotification *)n {
     // Status bar visibility
-    BOOL showStatus = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefShowStatusBar];
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    BOOL showStatus = [ud boolForKey:kPrefShowStatusBar];
     _statusBar.hidden = !showStatus;
+
+    BOOL wrapTabs = [ud boolForKey:kPrefTabBarWrap];
+    _tabManager.tabBar.wrapMode     = wrapTabs;
+    _subTabManagerH.tabBar.wrapMode = wrapTabs;
+    _subTabManagerV.tabBar.wrapMode = wrapTabs;
 
     // Title bar (full path vs filename only)
     [self updateTitle];
+
+    // Toolbar toggle states (Word wrap, etc.) follow prefs — keep them
+    // in sync after a Preferences-pane change.
+    [self _refreshToolbarStates];
 }
 
 - (void)_darkModeChanged:(NSNotification *)n {
@@ -8156,7 +8687,21 @@ static int64_t _sysctlInt(const char *name) {
     // Windows NPP behaviour: no save prompts on quit.
     // Back up all modified editors to ~/.notepad++/backup/ and save session.
     // On next launch, modified files reload from backup and show as unsaved.
-    [self saveSession];
+    //
+    // Issue #87 — gate the session save on the new "Remember current session
+    // for next launch" pref AND on -nosession CLI flag (matches Windows NPP
+    // behaviour: both pref-off and -nosession suppress the per-launch save so
+    // a stale session.plist isn't left behind to surprise the user later).
+    // Auto-backup of unsaved files runs separately on its own timer and is
+    // intentionally NOT coupled — losing unsaved work to a crash is a separate
+    // concern from reopening tabs across launches.
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    BOOL rememberSession = [ud boolForKey:kPrefRememberSession];
+    AppDelegate *appDel = (AppDelegate *)NSApp.delegate;
+    BOOL cliNoSession = [appDel isKindOfClass:[AppDelegate class]] ? appDel.cliParams.noSession : NO;
+    if (rememberSession && !cliNoSession) {
+        [self saveSession];
+    }
     writeConfigXML();
     return YES;
 }

@@ -13,6 +13,13 @@ static NSString * const kHistoryFilter  = @"FindWindow_FilterHistory";
 static NSString * const kHistoryDir     = @"FindWindow_DirHistory";
 static const NSInteger kMaxHistory = 20;
 
+// Issue #37 — on Find tab, after a successful find via Enter in the search
+// combo we dim the window so the user can see the highlighted match in the
+// editor underneath. Restored to 1.0 when the window becomes key again
+// (user clicks back) or via Escape. Tuned low enough to make the editor
+// clearly readable but not so low the window vanishes.
+static const CGFloat kDimAlphaValue = 0.5;
+
 // ── Layout constants (matching Windows NPP proportions) ──────────────────────
 
 static const CGFloat kWinW      = 620;   // default window width
@@ -66,6 +73,11 @@ static const CGFloat kChkH      = 20;    // checkbox height
 
     FindWindowTab _currentTab;
     BOOL _cancelSearch;
+
+    // Issue #37 — set when a Find-tab Enter has just dimmed the window.
+    // windowDidBecomeKey: / cancelOperation: use this flag to know whether
+    // they need to restore opacity (they only restore if WE dimmed it).
+    BOOL _dimAfterFind;
 }
 
 static FindWindow *_sharedInstance = nil;
@@ -95,6 +107,11 @@ static FindWindow *_sharedInstance = nil;
 
     self = [super initWithWindow:win];
     if (self) {
+        // Issue #37 — we observe windowDidBecomeKey: to restore opacity
+        // after a "find-and-dim". Set after super init so the window is
+        // fully owned by self.
+        win.delegate = self;
+
         _currentTab = FindWindowTabFind;
         [self _buildAllTabs];
         [self _restoreHistory];
@@ -109,6 +126,11 @@ static FindWindow *_sharedInstance = nil;
     _currentTab = tab;
     _tabControl.selectedSegment = tab;
     [self _switchToTab:tab];
+    // Issue #37 — always present the window fully opaque. If a previous
+    // session dimmed it via Find+Enter and the user closed without ever
+    // clicking back, the window would re-open at 0.4 opacity otherwise.
+    self.window.alphaValue = 1.0;
+    _dimAfterFind = NO;
     [self showWindow:nil];
     [self.window makeKeyAndOrderFront:nil];
     [self.window makeFirstResponder:_findCombo];
@@ -377,6 +399,12 @@ static void _placeChk(NSView *parent, NSButton *chk, CGFloat x, CGFloat y) {
 
     // ── Shared combos ────────────────────────────────────────────────────
     _findCombo    = _mkCombo();
+    // Issue #37 — Enter inside the Find-what combo's field editor is
+    // consumed by NSComboBox before our window's keyDown: ever fires.
+    // Wiring target/action lets us catch it and route to a tab-gated
+    // wrapper that only auto-fires on the Find tab.
+    _findCombo.target = self;
+    _findCombo.action = @selector(_findComboEnterPressed:);
     _replaceCombo = _mkCombo();
     _filtersCombo = _mkCombo();
     _filtersCombo.stringValue = @"*.*";
@@ -744,10 +772,21 @@ static CGFloat _fromTop(NSView *container, CGFloat topOffset, CGFloat height) {
     if (!ed) return;
     BOOL forward = (opts.direction == NPPSearchDown);
     BOOL found = [SearchEngine findInView:ed.scintillaView options:opts forward:forward];
-    if (!found)
+    if (!found) {
         [self _showStatus:[NSString stringWithFormat:[[NppLocalizer shared] translate:@"Find: Can't find the text \"%@\""], opts.searchText] found:NO];
-    else
+    } else {
         [self _showStatus:@"" found:YES];
+        // Issue #37 — only on Find tab: dim the window so the user can
+        // see the highlighted match in the editor underneath. Restored
+        // when the window becomes key again or via Escape. We
+        // deliberately don't dim on Replace/FiF/FiP/Mark because those
+        // workflows expect the window to stay visible for next-step
+        // input (replacement text, file path, etc.).
+        if (_currentTab == FindWindowTabFind) {
+            self.window.animator.alphaValue = kDimAlphaValue;
+            _dimAfterFind = YES;
+        }
+    }
 }
 
 - (void)_count:(id)sender {
@@ -1170,8 +1209,48 @@ static CGFloat _fromTop(NSView *container, CGFloat topOffset, CGFloat height) {
         [self _findNext:nil];
         return;
     }
-    if (ch == 0x1B) { [self _close:nil]; return; }
+    // Escape is handled by cancelOperation: below — that path also fires
+    // when focus is in a field editor (NSComboBox), where this keyDown:
+    // would never see the event.
     [super keyDown:event];
+}
+
+// Issue #37 — Enter inside the Find-what combo box. This fires from the
+// combo's target/action wired in _buildAllTabs. We strictly gate on
+// FindWindowTabFind: applying the dim-on-find behaviour to the Replace /
+// Find-in-Files / Find-in-Projects / Mark tabs would be surprising and
+// risk side effects (e.g. a user in Replace pressing Enter expects to
+// step focus to the Replace combo, not run a find).
+- (void)_findComboEnterPressed:(id)sender {
+    if (_currentTab != FindWindowTabFind) return;
+    [self _findNext:nil];
+}
+
+#pragma mark - NSWindowDelegate
+
+// Issue #37 — when the user clicks back on the find window after the
+// dim-on-find, restore full opacity. Only acts if WE were the ones who
+// dimmed it, so we don't fight any external alpha changes.
+- (void)windowDidBecomeKey:(NSNotification *)notification {
+    if (_dimAfterFind) {
+        self.window.animator.alphaValue = 1.0;
+        _dimAfterFind = NO;
+    }
+}
+
+// Issue #37 — Escape: smart fallback. If the window is currently dimmed
+// from a Find+Enter, restore opacity (and DO NOT close — closing while
+// dimmed feels jarring and loses the user's search context). Otherwise,
+// behave as before and close the window. cancelOperation: bubbles up
+// the responder chain even when focus is in a field editor, which is
+// why we use it instead of catching 0x1B in keyDown:.
+- (void)cancelOperation:(id)sender {
+    if (_dimAfterFind) {
+        self.window.animator.alphaValue = 1.0;
+        _dimAfterFind = NO;
+        return;
+    }
+    [self _close:nil];
 }
 
 @end

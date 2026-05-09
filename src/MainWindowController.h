@@ -9,6 +9,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// Open a file (called by AppDelegate when the OS hands us a file to open).
 - (void)openFileAtPath:(NSString *)path;
 
+/// Bring the receiver's window to the user's attention: activate the app,
+/// deminiaturize the window if it's currently in the Dock, and order it
+/// front. Idempotent — safe to call when the window is already key/visible.
+/// Used by AppDelegate's open-file delegate hooks so opening a file from
+/// Finder while the window is minimized actually surfaces the window
+/// instead of silently adding the file to a hidden tab (issue #63).
+- (void)bringWindowForward;
+
 /// The active editor in the currently focused pane (for plugin access).
 - (nullable EditorView *)currentEditor;
 

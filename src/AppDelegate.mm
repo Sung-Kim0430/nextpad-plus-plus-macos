@@ -142,7 +142,11 @@
     } else if (cli.filePaths.count > 0) {
         [self _openFilesFromCLI:cli inController:self.mainWindowController];
         hasContent = YES;
-    } else if (!cli.noSession) {
+    } else if (!cli.noSession &&
+               [[NSUserDefaults standardUserDefaults] boolForKey:kPrefRememberSession]) {
+        // Issue #87 — Preferences > Backup > "Remember current session for next launch"
+        // mirrors the Windows NPP RememberLastSession option. Off → start with a clean
+        // editor on each launch. -nosession CLI flag still overrides per-invocation.
         hasContent = [self.mainWindowController restoreLastSession];
     }
     // If nothing was opened, create an empty tab (first launch or -nosession with no files)
@@ -224,7 +228,29 @@
             [self.mainWindowController openFileAtPath:path];
         }
         [_pendingFilePaths removeAllObjects];
+        // Files queued during launch mean the user explicitly asked us to
+        // open something. NSApplication usually foregrounds a launching
+        // app naturally, but state restoration can leave the window
+        // miniaturized — call the helper so the freshly-loaded files are
+        // actually visible (issue #63).
+        [self.mainWindowController bringWindowForward];
     }
+
+    // ── Initial keyboard focus to the active editor (issue #34) ─────────
+    // Without this, the user's first keystrokes after relaunch go nowhere
+    // and VoiceOver announces a splitter instead of the editor. The fix
+    // has two parts: (1) target SCIContentView via .content, not the
+    // ScintillaView NSView wrapper — ScintillaView itself is not in the
+    // editor's keyDown: chain, so making it first responder leaves typing
+    // dead until the user clicks inside the editor; (2) defer the call
+    // to the next runloop tick so it runs after AppKit has finished
+    // settling the freshly-shown window's first responder.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        EditorView *ed = [self.mainWindowController currentEditor];
+        if (ed.scintillaView.content) {
+            [self.mainWindowController.window makeFirstResponder:ed.scintillaView.content];
+        }
+    });
 
     // ── Background update check (non-blocking, after 5 second delay) ────
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
@@ -349,6 +375,11 @@
     }
     MainWindowController *mwc = [self _activeWindowController];
     [mwc openFileAtPath:filename];
+    // Issue #63: surface the window to the user. Without this, opening a
+    // file from Finder while the app is minimized silently adds the file
+    // to a tab inside an invisible window and the user has to hunt for
+    // the Dock icon to see it.
+    [mwc bringWindowForward];
     return YES;
 }
 
@@ -362,6 +393,10 @@
     for (NSString *path in filenames) {
         [mwc openFileAtPath:path];
     }
+    // Issue #63: bring the window forward AFTER all files are added so
+    // there's no flicker between batches and the front-most tab is the
+    // last one opened (the standard macOS behaviour for multi-file open).
+    [mwc bringWindowForward];
     [sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
 }
 
@@ -440,15 +475,18 @@
     }
 
     // ── PluginCommands ──
-    for (NSXMLElement *pc in [doc nodesForXPath:@"//PluginCommands/PluginCommand" error:nil]) {
-        NSString *pluginName = [[pc attributeForName:@"moduleName"] stringValue];
-        NSInteger internalID = [[[pc attributeForName:@"internalID"] stringValue] integerValue];
-        // Find the plugin menu item by walking Plugins menu
-        NSMenu *mainMenu = [NSApp mainMenu];
-        for (NSMenuItem *topItem in mainMenu.itemArray) {
-            NSString *menuTitle = topItem.submenu.title ?: topItem.title;
-            if (![menuTitle isEqualToString:@"Plugins"]) continue;
-            for (NSMenuItem *pluginItem in topItem.submenu.itemArray) {
+    // Look up the Plugins / Macro / Run top-level menus by tag rather than
+    // English title — when the user runs in a non-English locale the menu
+    // titles are translated by NppLocalizer (e.g. "Плагины", "Макрос",
+    // "Запустить"), and an isEqualToString:@"Plugins" check would silently
+    // skip the entire shortcut-override pass. Tags are assigned in
+    // MenuBuilder at build time and survive translation.
+    NSMenu *pluginsMenu = [[[NSApp mainMenu] itemWithTag:kMenuTagPlugins] submenu];
+    if (pluginsMenu) {
+        for (NSXMLElement *pc in [doc nodesForXPath:@"//PluginCommands/PluginCommand" error:nil]) {
+            NSString *pluginName = [[pc attributeForName:@"moduleName"] stringValue];
+            NSInteger internalID = [[[pc attributeForName:@"internalID"] stringValue] integerValue];
+            for (NSMenuItem *pluginItem in pluginsMenu.itemArray) {
                 if (![pluginItem.title isEqualToString:pluginName]) continue;
                 if (!pluginItem.submenu) continue;
                 NSInteger cmdIdx = 0;
@@ -462,49 +500,41 @@
                     cmdIdx++;
                 }
             }
-            break;
+            nextPlugin:;
         }
-        nextPlugin:;
     }
 
     // ── Macro shortcuts ──
-    for (NSXMLElement *mc in [doc nodesForXPath:@"//Macros/Macro" error:nil]) {
-        NSString *macroName = [[mc attributeForName:@"name"] stringValue];
-        NSUInteger keyCode = [[[mc attributeForName:@"Key"] stringValue] integerValue];
-        if (keyCode == 0) continue;
-        // Find macro menu item by title
-        NSMenu *mainMenu = [NSApp mainMenu];
-        for (NSMenuItem *topItem in mainMenu.itemArray) {
-            NSString *menuTitle = topItem.submenu.title ?: topItem.title;
-            if (![menuTitle isEqualToString:@"Macro"]) continue;
-            for (NSMenuItem *mi in topItem.submenu.itemArray) {
+    NSMenu *macroMenu = [[[NSApp mainMenu] itemWithTag:kMenuTagMacro] submenu];
+    if (macroMenu) {
+        for (NSXMLElement *mc in [doc nodesForXPath:@"//Macros/Macro" error:nil]) {
+            NSString *macroName = [[mc attributeForName:@"name"] stringValue];
+            NSUInteger keyCode = [[[mc attributeForName:@"Key"] stringValue] integerValue];
+            if (keyCode == 0) continue;
+            for (NSMenuItem *mi in macroMenu.itemArray) {
                 if ([mi.title isEqualToString:macroName]) {
                     applyOverride(mc, mi);
                     totalApplied++;
                     break;
                 }
             }
-            break;
         }
     }
 
     // ── Run Commands (UserDefinedCommands) ──
-    for (NSXMLElement *rc in [doc nodesForXPath:@"//UserDefinedCommands/Command" error:nil]) {
-        NSString *cmdName = [[rc attributeForName:@"name"] stringValue];
-        NSUInteger keyCode = [[[rc attributeForName:@"Key"] stringValue] integerValue];
-        if (keyCode == 0 || !cmdName.length) continue;
-        NSMenu *mainMenu = [NSApp mainMenu];
-        for (NSMenuItem *topItem in mainMenu.itemArray) {
-            NSString *menuTitle = topItem.submenu.title ?: topItem.title;
-            if (![menuTitle isEqualToString:@"Run"]) continue;
-            for (NSMenuItem *mi in topItem.submenu.itemArray) {
+    NSMenu *runMenu = [[[NSApp mainMenu] itemWithTag:kMenuTagRun] submenu];
+    if (runMenu) {
+        for (NSXMLElement *rc in [doc nodesForXPath:@"//UserDefinedCommands/Command" error:nil]) {
+            NSString *cmdName = [[rc attributeForName:@"name"] stringValue];
+            NSUInteger keyCode = [[[rc attributeForName:@"Key"] stringValue] integerValue];
+            if (keyCode == 0 || !cmdName.length) continue;
+            for (NSMenuItem *mi in runMenu.itemArray) {
                 if ([mi.title isEqualToString:cmdName]) {
                     applyOverride(rc, mi);
                     totalApplied++;
                     break;
                 }
             }
-            break;
         }
     }
 

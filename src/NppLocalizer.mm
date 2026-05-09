@@ -249,7 +249,13 @@ static NSString *normalizeForLookup(NSString *s) {
     NSString *key = normalizeForLookup(english);
     NSString *translated = self.translationMap[key];
     // Uncomment for debug: if (!translated) NSLog(@"[NppLocalizer] MISS: \"%@\"", english);
-    return translated ?: english;
+    // Fallback (no translation found) goes through stripAccelerators so
+    // Win32-style "&&" → "&" cleanup applies for English-only display too.
+    // Translated values are already pre-stripped during map building.
+    // Implicit contract for callers: use Win32-style "&&" for a literal
+    // ampersand; a lone "&" is treated as a Win32 mnemonic and dropped
+    // (matches how the translationMap lookup keys are normalized).
+    return translated ?: stripAccelerators(english);
 }
 
 - (NSString *)miscString:(NSString *)key {
@@ -726,11 +732,26 @@ static const char kOriginalSubmenuTitleKey = 0;
     // Check user directory first (allows overriding bundled files).
     NSString *userDir   = [NppLocalizer userLanguageDirectory];
     NSString *bundleDir = [NppLocalizer bundledLanguageDirectory];
+    NSFileManager *fm   = [NSFileManager defaultManager];
+
+    NSString *targetName = [stem stringByAppendingPathExtension:@"xml"];
 
     for (NSString *dir in @[userDir, bundleDir]) {
+        // Fast path: direct match. Works on case-insensitive volumes
+        // (the macOS default) regardless of how the file is actually cased.
         NSString *path = [[dir stringByAppendingPathComponent:stem]
                           stringByAppendingPathExtension:@"xml"];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) return path;
+        if ([fm fileExistsAtPath:path]) return path;
+
+        // Fallback: case-insensitive directory scan so that files with
+        // mixed-case names (e.g. chineseSimplified.xml) still load when
+        // the volume is case-sensitive APFS — see issue #23.
+        NSArray<NSString *> *entries = [fm contentsOfDirectoryAtPath:dir error:NULL];
+        for (NSString *entry in entries) {
+            if ([entry caseInsensitiveCompare:targetName] == NSOrderedSame) {
+                return [dir stringByAppendingPathComponent:entry];
+            }
+        }
     }
     return nil;
 }

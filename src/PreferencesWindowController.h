@@ -9,11 +9,23 @@ extern NSString *const kPrefAutoIndent;          // NSInteger 0=None 1=Advanced 
 extern NSString *const kPrefBackspaceUnindent;   // BOOL, default NO
 extern NSString *const kPrefTabOverrides;        // NSDictionary<langName, @{@"tabSize":@N, @"useTabs":@BOOL}>
 extern NSString *const kPrefShowLineNumbers;
+/// Word wrap. Persistent across launches (default NO).
+/// Three UI surfaces all read/write this key: the Preferences > Editor
+/// "Word wrap" checkbox, the View > Word Wrap menu item, and the toolbar
+/// Word Wrap button. Each writes the new state to kPrefWordWrap; toolbar/
+/// menu also propagates to every open editor across all open windows via
+/// NPPWordWrapSessionChanged broadcast (so a click universalizes the
+/// state mid-session). New tabs inherit the saved state via
+/// EditorView.applyPreferencesFromDefaults reading this key on init.
+/// RTL editors are skipped from the OFF path (they require wrap on for
+/// layout — see EditorView.setTextDirectionRTL: + _savedWrapBeforeRTL).
+extern NSString *const kPrefWordWrap;
 extern NSString *const kPrefHighlightCurrentLine;
 extern NSString *const kPrefEOLType;
 extern NSString *const kPrefEncoding;
 extern NSString *const kPrefAutoBackup;
 extern NSString *const kPrefBackupInterval;
+extern NSString *const kPrefRememberSession;     // BOOL, default YES — when off, app starts with a clean editor on each launch (issue #87)
 extern NSString *const kPrefZoomLevel;
 extern NSString *const kPrefSpellCheck;          // BOOL, default NO
 extern NSString *const kPrefAutoCompleteEnable;  // BOOL, default YES
@@ -24,6 +36,7 @@ extern NSString *const kPrefCaretWidth;          // NSInteger 1-3, default 1
 extern NSString *const kPrefTabMaxLabelWidth;    // NSInteger pixels, default 190
 extern NSString *const kPrefTabCloseButton;      // BOOL, default YES
 extern NSString *const kPrefDoubleClickTabClose; // BOOL, default NO
+extern NSString *const kPrefTabBarWrap;          // BOOL, default NO
 extern NSString *const kPrefVirtualSpace;        // BOOL, default NO
 extern NSString *const kPrefScrollBeyondLastLine;// BOOL, default NO
 extern NSString *const kPrefCaretBlinkRate;      // NSInteger ms, default 500

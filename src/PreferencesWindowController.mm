@@ -11,11 +11,13 @@ NSString *const kPrefAutoIndent         = @"autoIndent";  // 0=None 1=Advanced 2
 NSString *const kPrefBackspaceUnindent = @"backspaceUnindent";
 NSString *const kPrefTabOverrides      = @"tabOverrides"; // {langName: {tabSize:N, useTabs:BOOL}}
 NSString *const kPrefShowLineNumbers    = @"showLineNumbers";
+NSString *const kPrefWordWrap           = @"wordWrap";       // persistent across launches; default NO
 NSString *const kPrefHighlightCurrentLine = @"highlightCurrentLine";
 NSString *const kPrefEOLType            = @"eolType";       // 0=CRLF 1=LF 2=CR
 NSString *const kPrefEncoding           = @"encoding";      // 0=UTF-8 1=Latin-1
 NSString *const kPrefAutoBackup         = @"autoBackup";
 NSString *const kPrefBackupInterval     = @"backupInterval"; // seconds
+NSString *const kPrefRememberSession    = @"rememberSession"; // BOOL, default YES — issue #87
 NSString *const kPrefZoomLevel          = @"zoomLevel";
 NSString *const kPrefSpellCheck         = @"spellCheck";
 NSString *const kPrefAutoCompleteEnable  = @"autoCompleteEnable";
@@ -26,6 +28,7 @@ NSString *const kPrefCaretWidth          = @"caretWidth";
 NSString *const kPrefTabMaxLabelWidth    = @"tabMaxLabelWidth";
 NSString *const kPrefTabCloseButton      = @"tabCloseButton";
 NSString *const kPrefDoubleClickTabClose = @"doubleClickTabClose";
+NSString *const kPrefTabBarWrap          = @"tabBarWrap";
 NSString *const kPrefVirtualSpace        = @"virtualSpace";
 NSString *const kPrefScrollBeyondLastLine= @"scrollBeyondLastLine";
 NSString *const kPrefCaretBlinkRate      = @"caretBlinkRate";
@@ -108,11 +111,13 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefAutoIndent:         @1,   // 0=None 1=Advanced 2=Basic
         kPrefBackspaceUnindent:  @NO,
         kPrefShowLineNumbers:    @YES,
+        kPrefWordWrap:           @NO,   // persistent default (was session-only, now persistent)
         kPrefHighlightCurrentLine: @YES,
         kPrefEOLType:            @1,
         kPrefEncoding:           @0,
         kPrefAutoBackup:         @YES,
         kPrefBackupInterval:     @60,
+        kPrefRememberSession:    @YES,
         kPrefZoomLevel:          @0,
         kPrefLanguage:           @"english",
         // Default (light) theme colors
@@ -134,6 +139,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefTabMaxLabelWidth:     @190,
         kPrefTabCloseButton:       @YES,
         kPrefDoubleClickTabClose:  @NO,
+        kPrefTabBarWrap:           @NO,
         kPrefVirtualSpace:         @NO,
         kPrefScrollBeyondLastLine: @NO,
         kPrefCaretBlinkRate:       @500,
@@ -248,11 +254,13 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefAutoIndent:         @1,   // 0=None 1=Advanced 2=Basic
         kPrefBackspaceUnindent:  @NO,
         kPrefShowLineNumbers:    @YES,
+        kPrefWordWrap:           @NO,   // persistent default (was session-only, now persistent)
         kPrefHighlightCurrentLine: @YES,
         kPrefEOLType:            @1,
         kPrefEncoding:           @0,
         kPrefAutoBackup:         @YES,
         kPrefBackupInterval:     @60,
+        kPrefRememberSession:    @YES,
     }];
 }
 
@@ -595,6 +603,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     NppLocalizer *loc = [NppLocalizer shared];
     NSArray *checks = @[
         @[[loc translate:@"Show line numbers"],               @103, kPrefShowLineNumbers],
+        @[[loc translate:@"Word wrap"],                       @104, kPrefWordWrap],
         @[[loc translate:@"Highlight current line"],          @105, kPrefHighlightCurrentLine],
         @[[loc translate:@"Auto-close brackets ( ) [ ] { }"], @700, kPrefAutoCloseBrackets],
         @[[loc translate:@"Enable virtual space"],            @702, kPrefVirtualSpace],
@@ -1062,6 +1071,7 @@ static NSDictionary<NSString *, NSString *> *_langDisplayNames() {
     NSArray *checks = @[
         @[[loc translate:@"Show close button on tabs"],        @800, kPrefTabCloseButton],
         @[[loc translate:@"Double-click to close tab"],        @801, kPrefDoubleClickTabClose],
+        @[[loc translate:@"Wrap tabs to multiple lines"],      @803, kPrefTabBarWrap],
     ];
     for (NSArray *def in checks) {
         NSButton *chk = [NSButton checkboxWithTitle:def[0] target:self action:@selector(prefChanged:)];
@@ -1268,6 +1278,17 @@ static NSDictionary<NSString *, NSString *> *_langDisplayNames() {
     [v addSubview:autoBackup];
     y -= 30;
 
+    // Issue #87 — when off, app starts with a clean editor on each launch.
+    // Independent from auto-backup above (auto-backup keeps protecting unsaved
+    // work in case of crash; remember-session is purely about reopening tabs).
+    NSButton *rememberSession = [NSButton checkboxWithTitle:[[NppLocalizer shared] translate:@"Remember current session for next launch"]
+                                                     target:self action:@selector(prefChanged:)];
+    rememberSession.frame = NSMakeRect(20, y, 400, 20);
+    rememberSession.state = [ud boolForKey:kPrefRememberSession] ? NSControlStateValueOn : NSControlStateValueOff;
+    rememberSession.tag = 302;
+    [v addSubview:rememberSession];
+    y -= 30;
+
     NSTextField *intLabel = [NSTextField labelWithString:[[NppLocalizer shared] translate:@"Backup interval (seconds):"]];
     intLabel.frame = NSMakeRect(20, y, 200, 20);
     [v addSubview:intLabel];
@@ -1472,11 +1493,13 @@ static NSDictionary<NSString *, NSString *> *_langDisplayNames() {
             break;
         }
         case 103: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefShowLineNumbers]; break;
+        case 104: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefWordWrap]; break;
         case 105: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefHighlightCurrentLine]; break;
         case 200: [ud setInteger:[(NSPopUpButton *)sender indexOfSelectedItem] forKey:kPrefEOLType]; break;
         case 201: [ud setInteger:[(NSPopUpButton *)sender indexOfSelectedItem] forKey:kPrefEncoding]; break;
         case 300: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefAutoBackup]; break;
         case 301: [ud setInteger:[(NSTextField *)sender integerValue] forKey:kPrefBackupInterval]; break;
+        case 302: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefRememberSession]; break;
         case 400: {
             NSPopUpButton *popup = (NSPopUpButton *)sender;
             NSString *selectedName = popup.selectedItem.title;
@@ -1504,6 +1527,7 @@ static NSDictionary<NSString *, NSString *> *_langDisplayNames() {
         case 800: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefTabCloseButton]; break;
         case 801: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefDoubleClickTabClose]; break;
         case 802: [ud setInteger:[(NSTextField *)sender integerValue] forKey:kPrefTabMaxLabelWidth]; break;
+        case 803: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefTabBarWrap]; break;
         // General
         case 900: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefShowFullPathInTitle]; break;
         // Searching

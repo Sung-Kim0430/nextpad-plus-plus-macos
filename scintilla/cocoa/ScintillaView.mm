@@ -822,7 +822,39 @@ static NSCursor *cursorFromEnum(Window::Cursor cursor) {
 		// Only snap for positions inside the document - allow outside
 		// for overshoot.
 		long lineHeight = mOwner.backend->WndProc(Message::TextHeight, 0, 0);
-		rc.origin.y = std::round(rc.origin.y / lineHeight) * lineHeight;
+		// LOCAL CHANGE (notepad-plus-plus-mac issue #68): for discrete
+		// mouse-wheel clicks (USB clicky wheel, no precise deltas),
+		// round the proposed Y position in the DIRECTION OF MOTION
+		// instead of to the nearest line. With the upstream
+		// std::round(), a single slow wheel click that proposes
+		// <0.5 line of movement rounds back to the current line origin
+		// and the scroll is silently dropped — slow wheel users see
+		// nothing happen.
+		//
+		// Trackpad / Magic Mouse precise deltas keep the existing
+		// snap-to-nearest-line so they don't become jumpy. Programmatic
+		// scrolls (Find Next, Goto Line, sync-scroll, …) and animation
+		// frames also fall through to the existing branch since their
+		// currentEvent is not a discrete wheel event. Overshoot at the
+		// document's top/bottom edges is preserved by the surrounding
+		// guard.
+		if (lineHeight > 0) {
+			NSEvent *cur = NSApp.currentEvent;
+			BOOL discreteWheel = cur.type == NSEventTypeScrollWheel
+							  && !cur.hasPreciseScrollingDeltas;
+			if (discreteWheel) {
+				const double proposedLines = rc.origin.y / static_cast<double>(lineHeight);
+				const double currentLines  = self.visibleRect.origin.y / static_cast<double>(lineHeight);
+				const double diff = proposedLines - currentLines;
+				double snappedLines;
+				if (diff > 0 && diff < 1.0)        snappedLines = currentLines + 1.0;
+				else if (diff < 0 && diff > -1.0)  snappedLines = currentLines - 1.0;
+				else                               snappedLines = std::round(proposedLines);
+				rc.origin.y = snappedLines * lineHeight;
+			} else {
+				rc.origin.y = std::round(rc.origin.y / lineHeight) * lineHeight;
+			}
+		}
 	}
 	// Snap to whole points - on retina displays this avoids visual debris
 	// when scrolling horizontally.
@@ -953,6 +985,49 @@ static NSCursor *cursorFromEnum(Window::Cursor cursor) {
 - (void) deleteBackward: (id) sender {
 #pragma unused(sender)
 	mOwner.backend->DeleteBackward();
+}
+
+// macOS-standard text-edit shortcuts. These are dispatched by AppKit's
+// interpretKeyEvents: from the corresponding key+modifier combinations
+// (Option+Backspace, Option+Delete, Cmd+Backspace, Ctrl+K). Without
+// them the events would either fire Scintilla's Windows-style command
+// or be silently dropped because no responder implements them.
+//
+// Behaviour matches NSTextView: when a selection exists, every "delete
+// X" shortcut just deletes the selection (not the word/line). Scintilla's
+// SCI_DEL{WORD,LINE}{LEFT,RIGHT} ignore the anchor and act from the
+// caret outward, so we route through SCI_CLEAR (selection-aware) when a
+// selection is present.
+- (void) deleteWordBackward: (id) sender {
+#pragma unused(sender)
+	if (mOwner.backend->HasSelection())
+		mOwner.backend->WndProc(Message::Clear, 0, 0);
+	else
+		mOwner.backend->WndProc(Message::DelWordLeft, 0, 0);
+}
+
+- (void) deleteWordForward: (id) sender {
+#pragma unused(sender)
+	if (mOwner.backend->HasSelection())
+		mOwner.backend->WndProc(Message::Clear, 0, 0);
+	else
+		mOwner.backend->WndProc(Message::DelWordRight, 0, 0);
+}
+
+- (void) deleteToBeginningOfLine: (id) sender {
+#pragma unused(sender)
+	if (mOwner.backend->HasSelection())
+		mOwner.backend->WndProc(Message::Clear, 0, 0);
+	else
+		mOwner.backend->WndProc(Message::DelLineLeft, 0, 0);
+}
+
+- (void) deleteToEndOfLine: (id) sender {
+#pragma unused(sender)
+	if (mOwner.backend->HasSelection())
+		mOwner.backend->WndProc(Message::Clear, 0, 0);
+	else
+		mOwner.backend->WndProc(Message::DelLineRight, 0, 0);
 }
 
 - (void) cut: (id) sender {
