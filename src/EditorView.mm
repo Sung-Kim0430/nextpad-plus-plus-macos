@@ -663,32 +663,70 @@ static NSUInteger nppLargeFileThreshold(void) {
 }
 
 - (BOOL)saveToPath:(NSString *)path error:(NSError **)error {
-    NSString *content = _scintillaView.string;
+    BOOL ok = NO;
 
-    // Build the byte payload (BOM + encoded content).
-    NSMutableData *out = [NSMutableData data];
-    if (_hasBOM) {
-        if (_fileEncoding == NSUTF8StringEncoding) {
+    if (_fileEncoding == NSUTF8StringEncoding) {
+        // ── Zero-copy UTF-8 fast path (Phase 2.5) ─────────────────────────
+        // SCI_GETCHARACTERPOINTER asks Scintilla to compact its gap buffer
+        // so the document is one contiguous span, then returns a const char*
+        // into Scintilla's internal storage. We hand that pointer to NSData
+        // (no-copy wrapper) and write directly. No NSString allocation, no
+        // re-encoding pass. The pointer is invalidated by ANY subsequent
+        // edit — we only hold it for the synchronous writeToFile: call,
+        // and we're on the main thread, so no concurrent edits can occur.
+        ScintillaView *sci = _scintillaView;
+        intptr_t len = [sci message:SCI_GETLENGTH];
+        const char *bytes = (const char *)[sci message:SCI_GETCHARACTERPOINTER];
+
+        if (_hasBOM) {
+            // BOM-prefixed UTF-8: build a small buffer with the 3-byte BOM
+            // followed by the body. The body is one memcpy from Scintilla's
+            // pointer (no NSString round-trip — still ~50% RAM savings vs
+            // the previous path on huge files).
+            NSMutableData *out = [NSMutableData dataWithCapacity:(NSUInteger)len + 3];
             const uint8_t bom[] = {0xEF, 0xBB, 0xBF};
             [out appendBytes:bom length:3];
-        } else if (_fileEncoding == NSUTF16BigEndianStringEncoding) {
-            const uint8_t bom[] = {0xFE, 0xFF};
-            [out appendBytes:bom length:2];
-        } else if (_fileEncoding == NSUTF16LittleEndianStringEncoding) {
-            const uint8_t bom[] = {0xFF, 0xFE};
-            [out appendBytes:bom length:2];
+            if (len > 0 && bytes != NULL) [out appendBytes:bytes length:(NSUInteger)len];
+            ok = [out writeToFile:path atomically:YES];
+        } else {
+            // No BOM: full zero-copy path. NSData wraps Scintilla's pointer
+            // without copying; writeToFile streams it straight to disk.
+            NSData *body = (len > 0 && bytes != NULL)
+                ? [NSData dataWithBytesNoCopy:(void *)bytes
+                                       length:(NSUInteger)len
+                                 freeWhenDone:NO]
+                : [NSData data];
+            ok = [body writeToFile:path atomically:YES];
         }
+    } else {
+        // ── Non-UTF-8 path (unchanged from pre-Phase-2.5) ──────────────────
+        // BOM-detected UTF-16 LE/BE, or files explicitly converted to
+        // Win-1252 / Latin-1 via the Encoding menu. Scintilla stores the
+        // document as UTF-8 internally, so we must round-trip through
+        // NSString to re-encode. Acceptable cost on these formats — they're
+        // rare for huge files (no one keeps a 3 GB UTF-16-BOM CSV).
+        NSString *content = _scintillaView.string;
+        NSMutableData *out = [NSMutableData data];
+        if (_hasBOM) {
+            if (_fileEncoding == NSUTF16BigEndianStringEncoding) {
+                const uint8_t bom[] = {0xFE, 0xFF};
+                [out appendBytes:bom length:2];
+            } else if (_fileEncoding == NSUTF16LittleEndianStringEncoding) {
+                const uint8_t bom[] = {0xFF, 0xFE};
+                [out appendBytes:bom length:2];
+            }
+        }
+        NSData *body = [content dataUsingEncoding:_fileEncoding allowLossyConversion:YES];
+        if (!body) {
+            if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain
+                                                   code:NSFileWriteInapplicableStringEncodingError
+                                               userInfo:nil];
+            return NO;
+        }
+        [out appendData:body];
+        ok = [out writeToFile:path atomically:YES];
     }
-    NSData *body = [content dataUsingEncoding:_fileEncoding allowLossyConversion:YES];
-    if (!body) {
-        if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain
-                                               code:NSFileWriteInapplicableStringEncodingError
-                                           userInfo:nil];
-        return NO;
-    }
-    [out appendData:body];
 
-    BOOL ok = [out writeToFile:path atomically:YES];
     if (!ok) {
         if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain
                                                code:NSFileWriteUnknownError userInfo:nil];
@@ -796,14 +834,29 @@ static NSUInteger nppLargeFileThreshold(void) {
     }
 
     // Scintilla stores content as UTF-8 bytes internally.
-    // For UTF-8 files: write raw bytes directly (no conversion needed).
-    // For non-UTF-8 files: convert via NSString (same as saveToPath:).
+    // Phase 2.5 — for UTF-8 files use SCI_GETCHARACTERPOINTER to read straight
+    // out of Scintilla's gap buffer (no malloc, no SCI_GETTEXT copy). One
+    // memcpy via appendBytes (only when BOM is present and we're already
+    // building a NSMutableData; otherwise we wrap zero-copy below).
     if (_fileEncoding == NSUTF8StringEncoding) {
-        char *buf = (char *)malloc((size_t)len + 1);
-        if (!buf) return nil;
-        [_scintillaView message:SCI_GETTEXT wParam:(uptr_t)(len + 1) lParam:(sptr_t)buf];
-        [out appendBytes:buf length:(NSUInteger)len];
-        free(buf);
+        const char *bytes = (const char *)[_scintillaView message:SCI_GETCHARACTERPOINTER];
+        if (_hasBOM) {
+            // BOM already appended above — just append body bytes (one memcpy).
+            if (len > 0 && bytes != NULL) [out appendBytes:bytes length:(NSUInteger)len];
+        } else {
+            // No BOM: skip building NSMutableData entirely, write zero-copy.
+            // (The `out` we built above is empty in this branch.)
+            NSData *body = (len > 0 && bytes != NULL)
+                ? [NSData dataWithBytesNoCopy:(void *)bytes
+                                       length:(NSUInteger)len
+                                 freeWhenDone:NO]
+                : [NSData data];
+            if ([body writeToFile:dest atomically:YES]) {
+                _backupFilePath = [dest copy];
+                return dest;
+            }
+            return nil;
+        }
     } else {
         NSString *content = _scintillaView.string;
         NSData *body = [content dataUsingEncoding:_fileEncoding allowLossyConversion:YES];
