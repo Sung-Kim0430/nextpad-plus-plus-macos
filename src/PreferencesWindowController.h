@@ -87,7 +87,7 @@ extern NSString *const kPrefLargeFileAllowAutoComplete;  // BOOL, default NO  �
 extern NSString *const kPrefLargeFileAllowSmartHilite;   // BOOL, default NO  — keep smart highlight when large
 extern NSString *const kPrefLargeFileAllowBraceMatch;    // BOOL, default NO  — keep brace match when large
 extern NSString *const kPrefLargeFileAllowURLClick;      // BOOL, default NO  — keep URL hyperlinks when large
-extern NSString *const kPrefLargeFileSuppress2GBWarning; // BOOL, default NO  — skip warning above 2 GB
+extern NSString *const kPrefLargeFileSuppress2GBWarning; // BOOL, default YES — skip warning above 2 GB
 
 // Theme / Style Configurator keys (hex color strings "#RRGGBB")
 extern NSString *const kPrefThemePreset;    // preset name or "Custom"

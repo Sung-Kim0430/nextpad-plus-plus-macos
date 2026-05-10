@@ -193,7 +193,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefLargeFileAllowSmartHilite:   @NO,
         kPrefLargeFileAllowBraceMatch:    @NO,
         kPrefLargeFileAllowURLClick:      @NO,
-        kPrefLargeFileSuppress2GBWarning: @NO,
+        kPrefLargeFileSuppress2GBWarning: @YES,
     }];
     // Force-upgrade any stale @NO value stored by earlier builds.
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
