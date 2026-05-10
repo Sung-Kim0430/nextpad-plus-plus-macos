@@ -594,6 +594,19 @@ static NSUInteger nppLargeFileThreshold(void) {
         [_scintillaView message:SCI_RELEASEDOCUMENT wParam:0 lParam:newDoc];
     }
 
+    // ── Pre-insert undo gate for large files (Phase 2.6) ─────────────────────
+    // Disabling SCI_SETUNDOCOLLECTION BEFORE SCI_ADDTEXT prevents Scintilla's
+    // UndoHistory from copying the full insert payload into its scrap buffer.
+    // The scrap buffer is a std::string whose capacity is never released by
+    // SCI_EMPTYUNDOBUFFER (which calls .clear() — std::string::clear retains
+    // capacity). Without this gate, opening a 2.78 GB file holds ~2.78 GB of
+    // scrap capacity in RAM forever, on top of the document's own buffer.
+    // Small files keep the existing behavior (undo on during load, then
+    // SCI_EMPTYUNDOBUFFER below); the per-tab waste is bounded by file size.
+    if (large) {
+        [_scintillaView message:SCI_SETUNDOCOLLECTION wParam:0 lParam:0];
+    }
+
     // Load into Scintilla using SCI_ADDTEXT with explicit length — binary safe.
     [_scintillaView message:SCI_CLEARALL wParam:0 lParam:0];
     [_scintillaView message:SCI_ADDTEXT
@@ -610,9 +623,9 @@ static NSUInteger nppLargeFileThreshold(void) {
     NSString *ext = path.pathExtension.lowercaseString;
     NSString *lang = extensionLanguageMap()[ext] ?: @"";
     if (large) {
-        // Disable syntax highlighting and undo for large files to stay responsive.
+        // Syntax highlighting off (undo was already disabled before SCI_ADDTEXT
+        // above — see "Pre-insert undo gate" comment).
         [self setLanguage:@""];
-        [_scintillaView message:SCI_SETUNDOCOLLECTION wParam:0 lParam:0];
         // Performance pref — turn off word wrap for large files. Word-wrap on
         // a multi-million-line buffer is dominated by wrap-recompute time, so
         // even users who normally wrap usually want it off for huge files.
