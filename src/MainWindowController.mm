@@ -1180,16 +1180,25 @@ static NSImage *_customToolbarIcon(NSString *buttonId, NSDictionary *toolbarConf
 - (void)drawRect:(NSRect)dirty {
     BOOL isDark = [NppThemeManager shared].isDark;
 
-    // Toggle-on (dark only): persistent black background, takes precedence
-    // over hover. Light mode keeps its existing behavior (no persistent bg)
-    // so on/off feedback stays signalled via the icon glyph as today.
-    if (_toggledOn && isDark) {
-        NSColor *bg = [NSColor colorWithRed:0x00/255.0 green:0x00/255.0 blue:0x00/255.0 alpha:1.0];
+    // Toggle-on: persistent background (mirrors NppToggleToolbarButton so the
+    // pilcrow group reads the same as adjacent Word-Wrap / Indent-Guide chips).
+    // Takes precedence over hover.
+    //   Dark : #232323 (between Pressed #212121 and Hover #2E2E2E).
+    //   Light: #CCE8FF @ 65% + #80C0FF border @ 80%.
+    if (_toggledOn) {
+        NSColor *bg, *bdr;
+        if (isDark) {
+            bg  = [NSColor colorWithRed:0x23/255.0 green:0x23/255.0 blue:0x23/255.0 alpha:1.0];
+            bdr = bg;
+        } else {
+            bg  = [NSColor colorWithRed:0xCC/255.0 green:0xE8/255.0 blue:0xFF/255.0 alpha:0.65];
+            bdr = [NSColor colorWithRed:0x80/255.0 green:0xC0/255.0 blue:0xFF/255.0 alpha:0.80];
+        }
         NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:nppToolbarCornerR() yRadius:nppToolbarCornerR()];
         [bg setFill]; [p fill];
         NSBezierPath *q = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 0.5, 0.5)
                                                           xRadius:nppToolbarCornerR() yRadius:nppToolbarCornerR()];
-        q.lineWidth = 1.0; [bg setStroke]; [q stroke];
+        q.lineWidth = 1.0; [bdr setStroke]; [q stroke];
     } else if (_hovering) {
         NSColor *bg, *bdr;
         if (isDark) {
@@ -1496,6 +1505,7 @@ static NSDictionary<NSString *, NSArray *> *toolbarGroupMap(void) {
     NppToggleToolbarButton *_tbMonitor;
     NppToolbarButton *_tbStartRecord, *_tbStopRecord, *_tbPlayRecord, *_tbPlayRecordM, *_tbSaveRecord;
     _AllCharsHoverGroup *_tbAllCharsHoverGroup;  // dark-mode toggle-on bg painter
+    NSButton *_tbAllChars;  // pilcrow button — cached so _darkModeChanged: can refresh its image
 
     // Plugin toolbar icons: array of @{@"id": identifier, @"icon": NSImage, @"tooltip": NSString, @"cmdID": @(int)}
     NSMutableArray<NSDictionary *> *_pluginToolbarItems;
@@ -2256,6 +2266,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     charsBtn.target  = self;
     charsBtn.toolTip = [[NppLocalizer shared] translate:@"Show All Characters"];
     [hoverGroup addSubview:charsBtn];
+    _tbAllChars = charsBtn;  // cached so dark-mode-change can refresh its image
 
     _DropArrowButton *dropBtn = [[_DropArrowButton alloc]
         initWithFrame:NSMakeRect(kBtnSize + kInnerGap, 0, kDropW, kBtnSize)];
@@ -8311,6 +8322,16 @@ static BOOL _writeCLIScript(NSString *script, NSString *path, NSError **outErr) 
             }
         }
     }
+
+    // The view-toggles group (Word Wrap, Show All Characters, Indent Guide)
+    // is built inline without setting NSButton.identifier, and Show All
+    // Characters is additionally nested inside _AllCharsHoverGroup — neither
+    // condition the identifier-driven loop above can satisfy. Refresh those
+    // three buttons explicitly via the cached ivars so the icon set tracks a
+    // light↔dark switch mid-session.
+    if (_tbWrap)        _tbWrap.image        = nppToolbarIcon(@"wrap");
+    if (_tbAllChars)    _tbAllChars.image    = nppToolbarIcon(@"allChars");
+    if (_tbIndentGuide) _tbIndentGuide.image = nppToolbarIcon(@"indentGuide");
 
     // Plugin-supplied toolbar icons (Path A: `toolbar_dark.png` convention
     // alongside `toolbar.png`, or `<hint>_dark.<ext>` next to `<hint>`).
