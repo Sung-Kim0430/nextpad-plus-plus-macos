@@ -1110,8 +1110,19 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
     for (ShortcutEntry *e in allEntries) {
         if (!e.isModified) continue;
         if (!e.selectorName) continue;
-        SEL sel = NSSelectorFromString(e.selectorName);
-        NSMenuItem *mi = [self _findMenuItemWithAction:sel inMenu:[NSApp mainMenu]];
+        // Plugin commands all share the same selector (pluginMenuAction:), so a
+        // selector-only lookup returns the *first* plugin menu item in the
+        // walk and applies every plugin shortcut to it (issue #86). Resolve
+        // plugin entries via (pluginName, commandID) instead — mirroring the
+        // logic AppDelegate._loadShortcutOverrides already uses to apply
+        // shortcuts.xml at launch.
+        NSMenuItem *mi = nil;
+        if ([e.selectorName isEqualToString:@"pluginMenuAction:"] && e.pluginName.length) {
+            mi = [self _findPluginMenuItemWithName:e.pluginName internalID:e.commandID];
+        } else {
+            SEL sel = NSSelectorFromString(e.selectorName);
+            mi = [self _findMenuItemWithAction:sel inMenu:[NSApp mainMenu]];
+        }
         if (!mi) continue;
         [self _applyShortcutEntry:e toMenuItem:mi];
         modCount++;
@@ -1165,6 +1176,34 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
     }
     mi.keyEquivalent = key;
     mi.keyEquivalentModifierMask = mods;
+}
+
+// Resolve a plugin menu item by (pluginName, commandID) instead of by
+// selector. The selector pluginMenuAction: is shared across every plugin
+// command; only (parent-submenu-title, NSMenuItem.tag) identifies a command
+// uniquely. Mirrors AppDelegate._loadShortcutOverrides:485-505 — keep both
+// codepaths in sync if the matching policy ever changes.
+//
+// The tag-OR-cmdIdx fallback is intentional: most plugins assign tags 0..N
+// sequentially so cmdIdx == tag in practice, but if a plugin uses sparse
+// or unset tags, the cmdIdx leg still finds the Nth runnable command.
+- (nullable NSMenuItem *)_findPluginMenuItemWithName:(NSString *)pluginName
+                                          internalID:(NSInteger)internalID {
+    if (!pluginName.length) return nil;
+    NSMenu *pluginsMenu = [[[NSApp mainMenu] itemWithTag:kMenuTagPlugins] submenu];
+    if (!pluginsMenu) return nil;
+    for (NSMenuItem *pluginItem in pluginsMenu.itemArray) {
+        if (![pluginItem.title isEqualToString:pluginName]) continue;
+        if (!pluginItem.submenu) continue;
+        NSInteger cmdIdx = 0;
+        for (NSMenuItem *cmdItem in pluginItem.submenu.itemArray) {
+            if (cmdItem.isSeparatorItem || !cmdItem.action) continue;
+            if (cmdItem.tag == internalID || cmdIdx == internalID)
+                return cmdItem;
+            cmdIdx++;
+        }
+    }
+    return nil;
 }
 
 - (nullable NSMenuItem *)_findMenuItemWithAction:(SEL)action inMenu:(NSMenu *)menu {
