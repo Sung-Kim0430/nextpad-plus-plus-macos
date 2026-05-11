@@ -1053,8 +1053,10 @@ static NSImage *_customToolbarIcon(NSString *buttonId, NSDictionary *toolbarConf
     if (self.toggledOn && self.useBlueHighlight) {
         NSColor *bg, *bdr;
         if (isDark) {
-            // Black for active-toggle — distinct from the grey hover state.
-            bg  = [NSColor colorWithRed:0x00/255.0 green:0x00/255.0 blue:0x00/255.0 alpha:1.0];
+            // #232323 for active-toggle — darker than the chrome / hover states
+            // but not pure black so the chip reads as part of the same surface
+            // family. (Hover: #2E2E2E, Pressed: #212121, Toggled-on: #232323.)
+            bg  = [NSColor colorWithRed:0x23/255.0 green:0x23/255.0 blue:0x23/255.0 alpha:1.0];
             bdr = bg;
         } else {
             bg  = [NSColor colorWithRed:0xCC/255.0 green:0xE8/255.0 blue:0xFF/255.0 alpha:0.65];
