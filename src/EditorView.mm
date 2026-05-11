@@ -2345,14 +2345,11 @@ static const int kGitGutterMargin   = 4;  // margin index for git gutter
 }
 
 - (void)toggleLineComment:(id)sender {
-    NSString *prefix = @"//";
-    NSDictionary *commentMap = @{
-        @"python":@"#", @"bash":@"#", @"ruby":@"#", @"perl":@"#",
-        @"r":@"#", @"yaml":@"#", @"makefile":@"#", @"cmake":@"#", @"toml":@"#",
-        @"sql":@"--", @"lua":@"--", @"haskell":@"--",
-    };
-    NSString *mapped = commentMap[_currentLanguage.lowercaseString];
-    if (mapped) prefix = mapped;
+    // Issue #85 — use the same XML-aware lookup as ^K / ^⇧K so languages
+    // whose commentLine is declared in langs.xml (Fortran, VB, Lisp, Ada,
+    // Erlang, PowerShell, Tcl, INI, LaTeX, PostScript, …) toggle with the
+    // correct prefix instead of always falling back to "//".
+    NSString *prefix = [self _lineCommentPrefix];
     if (!prefix.length) return;
 
     ScintillaView *sci = _scintillaView;
