@@ -31,7 +31,7 @@ extern NSString *const kPrefSpellCheck;          // BOOL, default NO
 extern NSString *const kPrefAutoCompleteEnable;  // BOOL, default YES
 extern NSString *const kPrefAutoCompleteMinChars;// NSInteger 1-9, default 1
 extern NSString *const kPrefAutoCloseBrackets;   // BOOL, default YES
-extern NSString *const kPrefShowFullPathInTitle; // BOOL, default NO
+extern NSString *const kPrefShowFullPathInTitle; // BOOL, default YES
 extern NSString *const kPrefCaretWidth;          // NSInteger 1-3, default 1
 extern NSString *const kPrefTabMaxLabelWidth;    // NSInteger pixels, default 190
 extern NSString *const kPrefTabCloseButton;      // BOOL, default YES

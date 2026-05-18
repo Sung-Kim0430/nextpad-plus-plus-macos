@@ -152,7 +152,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefAutoCompleteEnable:   @YES,
         kPrefAutoCompleteMinChars: @1,
         kPrefAutoCloseBrackets:    @YES,
-        kPrefShowFullPathInTitle:  @NO,
+        kPrefShowFullPathInTitle:  @YES,
         kPrefCaretWidth:           @1,
         kPrefTabMaxLabelWidth:     @190,
         kPrefTabCloseButton:       @YES,
