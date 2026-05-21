@@ -1926,6 +1926,26 @@ static NSDictionary<NSString *, NSArray *> *toolbarGroupMap(void) {
         }
     }
     [tb insertItemWithItemIdentifier:ident atIndex:insertIdx];
+
+    // When the first plugin icon appears, the last standard group (macro) gains
+    // a trailing divider so plugin icons are visually separated. The group item
+    // was built before plugins loaded, so rebuild it once to pick up the divider.
+    if (_pluginToolbarItems.count == 1) [self _refreshLastStandardGroupDivider];
+}
+
+// Default mode only: rebuild the macro group (kTBGroup10) so makeGroupToolbarItem:
+// re-evaluates its trailing-divider condition (now that plugins are present).
+// No-op in user-config mode, where plugin buttons live inside the single
+// kTBUserConfig item and already get their own separator.
+- (void)_refreshLastStandardGroupDivider {
+    NSToolbar *tb = self.window.toolbar;
+    NSInteger idx = NSNotFound;
+    for (NSInteger i = 0; i < (NSInteger)tb.items.count; i++) {
+        if ([tb.items[i].itemIdentifier isEqualToString:kTBGroup10]) { idx = i; break; }
+    }
+    if (idx == NSNotFound) return;   // user-config mode (no separate macro group)
+    [tb removeItemAtIndex:idx];
+    [tb insertItemWithItemIdentifier:kTBGroup10 atIndex:idx];
 }
 
 // Try `filename` against each directory in `dirs` in order. Returns the
@@ -2346,7 +2366,11 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     }
     if (idents.count == 0) return nil; // entire group hidden
 
-    BOOL hasSep = groupHasTrailingSep(ident);
+    // The last standard group (macro) normally has no trailing separator, but
+    // gains one when plugin icons are present so the plugin section is visually
+    // separated — matching the dividers between the other standard groups.
+    BOOL hasSep = groupHasTrailingSep(ident) ||
+                  ([ident isEqualToString:kTBGroup10] && _pluginToolbarItems.count > 0);
     NSInteger n = (NSInteger)idents.count;
     CGFloat buttonsW = n * kBtnSize + (n - 1) * kSpacing;
     CGFloat totalW = buttonsW + (hasSep ? kSepPadL + 1 + kSepPadR : 0);
