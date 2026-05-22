@@ -2206,6 +2206,17 @@ static int vkToScintillaKey(int vk) {
     // loadFileAtPath: so the new doc (post-Phase-2 always-swap) inherits the
     // user's setting.
     [self applyWordCharsFromDefaults];
+
+    // ── Clickable links (issue #133) ──
+    // Full-clear the whole document indicator then re-mark the visible range.
+    // This runs on pref changes (enable/style) and reloads — not on scroll —
+    // so a live toggle-off wipes stale links everywhere, not just on-screen.
+    {
+        ScintillaView *s = _scintillaView;
+        [s message:SCI_SETINDICATORCURRENT wParam:kClickableLinkIndicator];
+        [s message:SCI_INDICATORCLEARRANGE wParam:0 lParam:[s message:SCI_GETLENGTH]];
+        [self updateClickableLinks];
+    }
 }
 
 // Cached at first read so subsequent loads don't have to round-trip through
@@ -2406,6 +2417,10 @@ static const int kSpellIndicator = 17;
 
 // Git diff line-highlight indicator (slot 18, INDIC_FULLBOX, pink)
 static const int kGitDiffIndicator = 18;
+
+// Clickable-link indicator (slot 19, issue #133). Style derived from prefs
+// (underline vs colored text; fullbox hover).
+static const int kClickableLinkIndicator = 19;
 
 // Git gutter marker slots — must be 0-19 (0-24 are user-definable, but 21-24
 // are used by change-history and 25-31 are reserved for fold markers).
@@ -3306,6 +3321,227 @@ static const int kIndicatorIncSearch = 28; // Scintilla indicator slot for incre
     }
 }
 
+#pragma mark - Clickable Links (issue #133)
+
+// Compiles a regex matching any of the user's custom URI schemes followed by a
+// run of URL characters. Cached on the schemes string (a global pref) so we
+// don't recompile on every scroll. Main-thread only (all callers are UI).
+static NSRegularExpression *nppClickableSchemeRegex(NSString *schemes) {
+    static NSString *cachedSrc = nil;
+    static NSRegularExpression *cachedRegex = nil;
+    if (cachedSrc && [schemes isEqualToString:cachedSrc]) return cachedRegex;
+    cachedSrc = [schemes copy];
+    cachedRegex = nil;
+    NSArray *tokens = [schemes componentsSeparatedByCharactersInSet:
+                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSMutableArray *escaped = [NSMutableArray array];
+    for (NSString *t in tokens)
+        if (t.length) [escaped addObject:[NSRegularExpression escapedPatternForString:t]];
+    if (escaped.count) {
+        // Scheme alternation followed by one+ non-space, non-markup chars.
+        NSString *pattern = [NSString stringWithFormat:@"(?:%@)[^\\s<>\"'`]+",
+                             [escaped componentsJoinedByString:@"|"]];
+        cachedRegex = [NSRegularExpression regularExpressionWithPattern:pattern
+                                                               options:NSRegularExpressionCaseInsensitive
+                                                                 error:nil];
+    }
+    return cachedRegex;
+}
+
+// Sets the slot-19 indicator appearance from the current prefs. INDIC_TEXTFORE
+// colors the link text without an underline ("No underline" mode); INDIC_PLAIN
+// draws an underline. Fullbox mode draws a filled box on hover.
+- (void)_configureClickableLinkIndicator {
+    ScintillaView *sci = _scintillaView;
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    BOOL noUnderline = [ud boolForKey:kPrefClickableLinkNoUnderline];
+    BOOL fullbox     = [ud boolForKey:kPrefClickableLinkFullBox];
+    int baseStyle  = noUnderline ? INDIC_TEXTFORE : INDIC_PLAIN;
+    int hoverStyle = fullbox ? INDIC_FULLBOX : baseStyle;
+    [sci message:SCI_INDICSETSTYLE        wParam:kClickableLinkIndicator lParam:baseStyle];
+    [sci message:SCI_INDICSETHOVERSTYLE   wParam:kClickableLinkIndicator lParam:hoverStyle];
+    [sci message:SCI_INDICSETFORE         wParam:kClickableLinkIndicator lParam:0xCC6600]; // #0066CC (BGR)
+    [sci message:SCI_INDICSETALPHA        wParam:kClickableLinkIndicator lParam:60];
+    [sci message:SCI_INDICSETOUTLINEALPHA wParam:kClickableLinkIndicator lParam:120];
+}
+
+// Re-mark clickable-link ranges within the currently visible viewport. Cheap:
+// only the on-screen byte range is scanned (mirrors Windows NPP addHotSpot).
+- (void)updateClickableLinks {
+    ScintillaView *sci = _scintillaView;
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+
+    [self _configureClickableLinkIndicator];
+
+    // Visible byte range — fold/wrap-aware via SCI_DOCLINEFROMVISIBLE.
+    sptr_t firstVisible  = [sci message:SCI_GETFIRSTVISIBLELINE];
+    sptr_t linesOnScreen = [sci message:SCI_LINESONSCREEN];
+    sptr_t lineCount     = [sci message:SCI_GETLINECOUNT];
+    sptr_t docFirst = [sci message:SCI_DOCLINEFROMVISIBLE wParam:(uptr_t)firstVisible];
+    sptr_t docLast  = [sci message:SCI_DOCLINEFROMVISIBLE
+                                 wParam:(uptr_t)(firstVisible + linesOnScreen + 1)];
+    if (docFirst < 0) docFirst = 0;
+    if (docLast >= lineCount) docLast = lineCount - 1;
+    if (docLast < docFirst) return;
+
+    sptr_t startPos = [sci message:SCI_POSITIONFROMLINE   wParam:(uptr_t)docFirst];
+    sptr_t endPos   = [sci message:SCI_GETLINEENDPOSITION wParam:(uptr_t)docLast];
+    if (endPos <= startPos) return;
+
+    // Bound the scan on pathologically long lines (minified bundles,
+    // single-line JSON/CSV, long log rows): the visible range is bounded by
+    // line *count*, but one line can be arbitrarily long, so a viewport filled
+    // by a single huge line would otherwise extract+scan megabytes on every
+    // keystroke/scroll. Cap to a fixed byte budget, backed off to a UTF-8 char
+    // boundary (skip continuation bytes 0x80–0xBF) so the buffer decodes
+    // cleanly. Links past the cap on such a line simply aren't marked.
+    static const sptr_t kMaxScanBytes = 128 * 1024;
+    if (endPos - startPos > kMaxScanBytes) {
+        endPos = startPos + kMaxScanBytes;
+        while (endPos > startPos &&
+               ((unsigned char)[sci message:SCI_GETCHARAT wParam:(uptr_t)endPos] & 0xC0) == 0x80)
+            endPos--;
+        if (endPos <= startPos) return;
+    }
+
+    // Clear the indicator across the visible range first.
+    [sci message:SCI_SETINDICATORCURRENT wParam:kClickableLinkIndicator];
+    [sci message:SCI_INDICATORCLEARRANGE wParam:(uptr_t)startPos lParam:(sptr_t)(endPos - startPos)];
+
+    if (![ud boolForKey:kPrefClickableLinkEnable]) return;
+    if (_largeFileMode && ![ud boolForKey:kPrefLargeFileAllowURLClick]) return;
+
+    // Extract visible text. Line boundaries are valid UTF-8 char boundaries,
+    // so the byte range decodes cleanly.
+    sptr_t len = endPos - startPos;
+    char *buf = (char *)malloc((size_t)len + 1);
+    if (!buf) return;
+    Sci_TextRangeFull tr;
+    tr.chrg.cpMin = (Sci_Position)startPos;
+    tr.chrg.cpMax = (Sci_Position)endPos;
+    tr.lpstrText  = buf;
+    [sci message:SCI_GETTEXTRANGEFULL wParam:0 lParam:(sptr_t)&tr];
+    NSString *text = [[NSString alloc] initWithBytes:buf length:(NSUInteger)len
+                                            encoding:NSUTF8StringEncoding];
+    free(buf);
+    if (!text.length) return;
+
+    // Map an NSString (UTF-16) sub-range to absolute document byte offsets and
+    // fill the indicator there.
+    void (^fillRange)(NSRange) = ^(NSRange r) {
+        if (r.length == 0) return;
+        NSUInteger byteStart = [[text substringToIndex:r.location]
+                                lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        NSUInteger byteLen = [[text substringWithRange:r]
+                              lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        if (byteLen == 0) return;
+        [sci message:SCI_INDICATORFILLRANGE
+                wParam:(uptr_t)(startPos + byteStart) lParam:(sptr_t)byteLen];
+    };
+
+    NSRange whole = NSMakeRange(0, text.length);
+
+    // 1) Standard web/mail links (http, https, ftp, mailto, bare www, …).
+    static NSDataDetector *detector = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        detector = [NSDataDetector dataDetectorWithTypes:NSTextCheckingTypeLink error:nil];
+    });
+    [detector enumerateMatchesInString:text options:0 range:whole
+                            usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags flags, BOOL *stop) {
+        if (m.resultType == NSTextCheckingTypeLink && m.URL) fillRange(m.range);
+    }];
+
+    // 2) Custom URI schemes from prefs (svn://, git://, …) the detector misses.
+    NSRegularExpression *schemeRegex =
+        nppClickableSchemeRegex([ud stringForKey:kPrefClickableLinkSchemes] ?: @"");
+    if (schemeRegex) {
+        static NSCharacterSet *trailTrim = nil;
+        static dispatch_once_t trimOnce;
+        dispatch_once(&trimOnce, ^{
+            trailTrim = [NSCharacterSet characterSetWithCharactersInString:@".,;:!?)]}>'\""];
+        });
+        [schemeRegex enumerateMatchesInString:text options:0 range:whole
+                                   usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags flags, BOOL *stop) {
+            NSRange r = m.range;
+            // Trim trailing sentence/markup punctuation that isn't part of the URL.
+            while (r.length > 0 &&
+                   [trailTrim characterIsMember:[text characterAtIndex:r.location + r.length - 1]])
+                r.length--;
+            fillRange(r);
+        }];
+    }
+}
+
+// Opens the clicked link if the double-click landed on a clickable-link
+// indicator. Returns YES if it handled the click (so the caller skips the
+// delimiter/word handlers). Only plain double-clicks (no modifiers) qualify —
+// ⌘ is reserved for delimiter selection.
+- (BOOL)_handleClickableLinkDoubleClick:(SCNotification *)notification {
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    if (![ud boolForKey:kPrefClickableLinkEnable]) return NO;
+    if (_largeFileMode && ![ud boolForKey:kPrefLargeFileAllowURLClick]) return NO;
+    if (notification->modifiers != 0) return NO;  // ⌘ etc. handled elsewhere
+
+    ScintillaView *sci = _scintillaView;
+    sptr_t pos = notification->position;
+    if (pos < 0) return NO;
+
+    sptr_t onMask = [sci message:SCI_INDICATORALLONFOR wParam:(uptr_t)pos];
+    if (!(onMask & (1 << kClickableLinkIndicator))) return NO;
+
+    sptr_t start = [sci message:SCI_INDICATORSTART wParam:kClickableLinkIndicator lParam:pos];
+    sptr_t end   = [sci message:SCI_INDICATOREND   wParam:kClickableLinkIndicator lParam:pos];
+    if (end <= start || pos < start || pos > end) return NO;
+
+    sptr_t len = end - start;
+    // Defensive: a real URL is never this long. A huge indicator run can only
+    // arise from a pathological no-whitespace line; don't extract megabytes.
+    if (len > 64 * 1024) return NO;
+    char *buf = (char *)malloc((size_t)len + 1);
+    if (!buf) return NO;
+    Sci_TextRangeFull tr;
+    tr.chrg.cpMin = (Sci_Position)start;
+    tr.chrg.cpMax = (Sci_Position)end;
+    tr.lpstrText  = buf;
+    [sci message:SCI_GETTEXTRANGEFULL wParam:0 lParam:(sptr_t)&tr];
+    NSString *urlText = [[NSString alloc] initWithBytes:buf length:(NSUInteger)len
+                                               encoding:NSUTF8StringEncoding];
+    free(buf);
+    if (!urlText.length) return NO;
+
+    // Collapse the word selection Scintilla made on double-click before we
+    // hand off to the browser (matches Windows NPP).
+    [sci message:SCI_SETSEL wParam:(uptr_t)pos lParam:pos];
+
+    NSURL *url = [self _urlFromLinkText:urlText];
+    if (url) [[NSWorkspace sharedWorkspace] openURL:url];
+    return YES;
+}
+
+// Builds an openable NSURL from highlighted link text. NSDataDetector
+// normalizes bare hosts (www.x.com → http://www.x.com); custom schemes fall
+// back to direct/percent-encoded construction.
+- (NSURL *)_urlFromLinkText:(NSString *)text {
+    static NSDataDetector *det = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        det = [NSDataDetector dataDetectorWithTypes:NSTextCheckingTypeLink error:nil];
+    });
+    NSTextCheckingResult *m = [det firstMatchInString:text options:0
+                                                range:NSMakeRange(0, text.length)];
+    if (m.URL && m.range.location == 0 && m.range.length == text.length)
+        return m.URL;
+
+    NSURL *u = [NSURL URLWithString:text];
+    if (u && u.scheme.length) return u;
+
+    NSString *enc = [text stringByAddingPercentEncodingWithAllowedCharacters:
+                     [NSCharacterSet URLFragmentAllowedCharacterSet]];
+    u = enc ? [NSURL URLWithString:enc] : nil;
+    return (u && u.scheme.length) ? u : nil;
+}
+
 #pragma mark - Macro Recording
 
 - (BOOL)isRecordingMacro { return _isRecordingMacro; }
@@ -3858,6 +4094,10 @@ static NSSet<NSString *> *_cLikeLanguages() {
         case SCN_UPDATEUI:
             [self updateBraceHighlight];
             [self updateSmartHighlight];
+            // Re-mark links only when content or the viewport changed — a
+            // bare cursor move (selection-only) can't change link positions.
+            if (notification->updated & (SC_UPDATE_CONTENT | SC_UPDATE_V_SCROLL | SC_UPDATE_H_SCROLL))
+                [self updateClickableLinks];
             if (_spellCheckEnabled) [self _scheduleSpellCheck];
             [[NSNotificationCenter defaultCenter]
                 postNotificationName:EditorViewCursorDidMoveNotification
@@ -3884,7 +4124,10 @@ static NSSet<NSString *> *_cLikeLanguages() {
             }
             break;
         case SCN_DOUBLECLICK:
-            [self _handleDelimiterDoubleClick:notification];
+            // Plain double-click on a link opens it; otherwise fall through to
+            // the ⌘+double-click delimiter handler (and native word select).
+            if (![self _handleClickableLinkDoubleClick:notification])
+                [self _handleDelimiterDoubleClick:notification];
             break;
         case SCN_ZOOM:
             // Re-fit the line-number margin to the new zoom level so digits

@@ -56,6 +56,12 @@ extern NSString *const kPrefFuncParamsHint;      // BOOL, default NO
 extern NSString *const kPrefFindTransparencyEnabled; // BOOL, default YES
 extern NSString *const kPrefFindTransparencyMode;    // NSInteger 0=on losing focus, 1=always
 extern NSString *const kPrefFindTransparencyAlpha;   // double 0.2–0.9, default 0.5
+// Clickable links (issue #133 — Windows "Cloud & Link" parity). These persist
+// the setting; the link detection/highlight/open behavior is wired separately.
+extern NSString *const kPrefClickableLinkEnable;     // BOOL, default YES
+extern NSString *const kPrefClickableLinkNoUnderline;// BOOL, default NO
+extern NSString *const kPrefClickableLinkFullBox;    // BOOL, default NO — box hover style vs underline
+extern NSString *const kPrefClickableLinkSchemes;    // NSString — space-separated URI schemes
 // Tier 1 booleans
 extern NSString *const kPrefShowStatusBar;       // BOOL, default YES
 extern NSString *const kPrefMuteSounds;          // BOOL, default NO

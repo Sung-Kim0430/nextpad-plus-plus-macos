@@ -45,6 +45,17 @@ NSString *const kPrefFuncParamsHint      = @"funcParamsHint";
 NSString *const kPrefFindTransparencyEnabled = @"findTransparencyEnabled";
 NSString *const kPrefFindTransparencyMode    = @"findTransparencyMode";   // 0=losing focus, 1=always
 NSString *const kPrefFindTransparencyAlpha   = @"findTransparencyAlpha";
+NSString *const kPrefClickableLinkEnable      = @"clickableLinkEnable";
+NSString *const kPrefClickableLinkNoUnderline = @"clickableLinkNoUnderline";
+NSString *const kPrefClickableLinkFullBox     = @"clickableLinkFullBox";
+NSString *const kPrefClickableLinkSchemes     = @"clickableLinkSchemes";
+
+// Windows NppGUI._uriSchemes default (Parameters.h) — the customized URI
+// schemes that should also be treated as clickable links.
+static NSString *const kDefaultClickableLinkSchemes =
+    @"svn:// cvs:// git:// imap:// irc:// irc6:// ircs:// ldap:// ldaps:// news: "
+    @"telnet:// gopher:// ssh:// sftp:// smb:// skype: snmp:// spotify: steam:// "
+    @"sms: slack:// chrome:// bitcoin:";
 NSString *const kPrefShowStatusBar       = @"showStatusBar";
 NSString *const kPrefMuteSounds          = @"muteSounds";
 NSString *const kPrefSaveAllConfirm      = @"saveAllConfirm";
@@ -114,7 +125,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
 
 // ── PreferencesWindowController ───────────────────────────────────────────────
 
-@interface PreferencesWindowController () <NSTableViewDataSource, NSTableViewDelegate>
+@interface PreferencesWindowController () <NSTableViewDataSource, NSTableViewDelegate, NSTextViewDelegate>
 @end
 
 @implementation PreferencesWindowController {
@@ -128,6 +139,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     NSDictionary<NSString *, NSString *> *_indentDisplayToInternal; // "Python" → "python"
     NSString             *_indentSelectedLang; // currently selected internal lang name (nil = [Default])
     NSTextField          *_delimWordCharsField; // Delimiter page — toggled enabled by radio
+    NSTextView           *_clickableSchemesTextView; // Cloud & Link page — URI customized schemes
 }
 
 + (void)load {
@@ -181,6 +193,10 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefFindTransparencyEnabled: @YES,  // matches Windows default
         kPrefFindTransparencyMode:    @0,    // 0=on losing focus, 1=always
         kPrefFindTransparencyAlpha:   @0.5,
+        kPrefClickableLinkEnable:      @YES, // matches Windows default (urlUnderLineFg)
+        kPrefClickableLinkNoUnderline: @NO,
+        kPrefClickableLinkFullBox:     @NO,
+        kPrefClickableLinkSchemes:     kDefaultClickableLinkSchemes,
         kPrefShowStatusBar:        @YES,
         kPrefMuteSounds:           @NO,
         kPrefSaveAllConfirm:       @NO,
@@ -286,6 +302,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         [loc translate:@"Auto-Completion"],
         [loc translate:@"Searching"],
         [loc translate:@"Delimiter"],
+        [loc translate:@"Cloud and Link"],
         [loc translate:@"Performance"],
         [loc translate:@"MISC."],
     ]];
@@ -337,6 +354,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         [[NppLocalizer shared] translate:@"Auto-Completion"],
         [[NppLocalizer shared] translate:@"Searching"],
         [[NppLocalizer shared] translate:@"Delimiter"],
+        [[NppLocalizer shared] translate:@"Cloud and Link"],
         [[NppLocalizer shared] translate:@"Performance"],
         [[NppLocalizer shared] translate:@"MISC."],
     ]];
@@ -570,6 +588,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     if ([name isEqualToString:[loc translate:@"Auto-Completion"]])  return [self _buildAutoCompletionPage];
     if ([name isEqualToString:[loc translate:@"Searching"]])        return [self _buildSearchingPage];
     if ([name isEqualToString:[loc translate:@"Delimiter"]])        return [self _buildDelimiterPage];
+    if ([name isEqualToString:[loc translate:@"Cloud and Link"]])     return [self _buildCloudLinkPage];
     if ([name isEqualToString:[loc translate:@"Performance"]])      return [self _buildPerformancePage];
     if ([name isEqualToString:[loc translate:@"MISC."]])            return [self _buildMiscPage];
     return nil;
@@ -1551,6 +1570,82 @@ static NSDictionary<NSString *, NSString *> *_langDisplayNames() {
 
 // Search Engine page removed — merged into Searching
 
+#pragma mark - Cloud & Link Page
+
+// Mirrors the "Clickable Link Settings" group from Windows NPP's "Cloud & Link"
+// preferences page (issue #133). The three checkboxes encode the same state
+// Windows packs into its urlMode enum; we persist them as independent booleans
+// (the link feature derives its style from them). The URI customized schemes
+// text box lists extra schemes that should also be treated as links.
+// This wires the settings only — link detection/highlight/open is separate.
+- (NSView *)_buildCloudLinkPage {
+    NSView *v = [[NSView alloc] init];
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    NppLocalizer *loc = [NppLocalizer shared];
+    CGFloat y = 380;
+
+    NSTextField *header = [NSTextField labelWithString:[loc translate:@"Clickable Link Settings"]];
+    header.frame = NSMakeRect(20, y, 400, 20);
+    header.font = [NSFont boldSystemFontOfSize:13];
+    [v addSubview:header];
+    y -= 32;
+
+    BOOL enabled = [ud boolForKey:kPrefClickableLinkEnable];
+
+    NSButton *enable = [NSButton checkboxWithTitle:[loc translate:@"Enable"]
+                                            target:self action:@selector(prefChanged:)];
+    enable.frame = NSMakeRect(40, y, 180, 20);
+    enable.state = enabled ? NSControlStateValueOn : NSControlStateValueOff;
+    enable.tag = 1600;
+    [v addSubview:enable];
+
+    NSButton *noUnderline = [NSButton checkboxWithTitle:[loc translate:@"No underline"]
+                                                 target:self action:@selector(prefChanged:)];
+    noUnderline.frame = NSMakeRect(230, y, 240, 20);
+    noUnderline.state = [ud boolForKey:kPrefClickableLinkNoUnderline] ? NSControlStateValueOn : NSControlStateValueOff;
+    noUnderline.tag = 1601;
+    noUnderline.enabled = enabled;
+    [v addSubview:noUnderline];
+    y -= 26;
+
+    NSButton *fullbox = [NSButton checkboxWithTitle:[loc translate:@"Enable fullbox mode"]
+                                             target:self action:@selector(prefChanged:)];
+    fullbox.frame = NSMakeRect(230, y, 240, 20);
+    fullbox.state = [ud boolForKey:kPrefClickableLinkFullBox] ? NSControlStateValueOn : NSControlStateValueOff;
+    fullbox.tag = 1602;
+    fullbox.enabled = enabled;
+    [v addSubview:fullbox];
+    y -= 42;
+
+    NSTextField *schemesLabel = [NSTextField labelWithString:[loc translate:@"URI customized schemes:"]];
+    schemesLabel.frame = NSMakeRect(20, y, 400, 20);
+    [v addSubview:schemesLabel];
+    y -= 84;
+
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, y, 480, 78)];
+    scroll.hasVerticalScroller = YES;
+    scroll.autohidesScrollers   = YES;
+    scroll.borderType           = NSBezelBorder;
+
+    NSTextView *tv = [[NSTextView alloc] initWithFrame:scroll.contentView.bounds];
+    tv.minSize = NSMakeSize(0, 78);
+    tv.maxSize = NSMakeSize(FLT_MAX, FLT_MAX);
+    tv.verticallyResizable   = YES;
+    tv.horizontallyResizable = NO;
+    tv.autoresizingMask      = NSViewWidthSizable;
+    tv.textContainer.widthTracksTextView = YES;
+    tv.richText  = NO;
+    tv.editable  = YES;
+    tv.font      = [NSFont systemFontOfSize:12];
+    tv.string    = [ud stringForKey:kPrefClickableLinkSchemes] ?: @"";
+    tv.delegate  = self;
+    scroll.documentView = tv;
+    [v addSubview:scroll];
+    _clickableSchemesTextView = tv;
+
+    return v;
+}
+
 #pragma mark - Performance Page
 
 // Phase 1 of huge-file support — mirrors the Windows NPP "Performance" pane.
@@ -1987,13 +2082,40 @@ static NSDictionary<NSString *, NSString *> *_langDisplayNames() {
         case 1505:    // Allow on several lines
             [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefDelimEntireDoc];
             break;
+        // Cloud & Link — Clickable Link Settings (1600-1602; schemes text view
+        // persists via textDidChange:)
+        case 1600: {  // Enable
+            BOOL on = [(NSButton *)sender state] == NSControlStateValueOn;
+            [ud setBool:on forKey:kPrefClickableLinkEnable];
+            // Mirror Windows: the style sub-options are only meaningful when enabled.
+            NSView *page = [(NSButton *)sender superview];
+            [(NSButton *)[page viewWithTag:1601] setEnabled:on];
+            [(NSButton *)[page viewWithTag:1602] setEnabled:on];
+            break;
+        }
+        case 1601: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefClickableLinkNoUnderline]; break;
+        case 1602: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefClickableLinkFullBox]; break;
     }
 
     [[NSNotificationCenter defaultCenter] postNotificationName:@"NPPPreferencesChanged" object:nil];
 }
 
 - (void)closePrefs:(id)sender {
+    [self _saveClickableSchemes];
     [self.window orderOut:nil];
+}
+
+#pragma mark - NSTextViewDelegate
+
+- (void)textDidChange:(NSNotification *)notification {
+    if (notification.object == _clickableSchemesTextView)
+        [self _saveClickableSchemes];
+}
+
+- (void)_saveClickableSchemes {
+    if (!_clickableSchemesTextView) return;
+    [[NSUserDefaults standardUserDefaults] setObject:(_clickableSchemesTextView.string ?: @"")
+                                              forKey:kPrefClickableLinkSchemes];
 }
 
 @end

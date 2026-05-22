@@ -630,6 +630,10 @@ static NSString *normalizeForLookup(NSString *s) {
         @"general":                        @"dlgattr:Preference_Global:title",
         @"new document":                   @"dlgattr:Preference_NewDoc:title",
         @"backup":                         @"dlgattr:Preference_Backup:title",
+        // macOS displays "Cloud and Link"; the Windows XML title is "Cloud & Link"
+        // (a single & is dropped as a mnemonic by normalizeForLookup, so the
+        // plain-English name never matches the harvested key — alias it here).
+        @"cloud and link":                 @"dlgattr:Preference_Cloud:title",
 
         // Window menu
         @"sort by":                        @"submenu:window-sortby",
