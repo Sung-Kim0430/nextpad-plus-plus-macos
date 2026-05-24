@@ -48,6 +48,15 @@ extern NSString *const kPrefScrollBeyondLastLine;// BOOL, default NO
 extern NSString *const kPrefCaretBlinkRate;      // NSInteger ms, default 500
 extern NSString *const kPrefFontQuality;         // NSInteger 0-3, default 3 (LCD)
 extern NSString *const kPrefLineHeightMultiplier;// double, default 1.0; presets 1.0/1.2/1.3/1.4/1.5 (issue #149)
+// Global override — force attributes from Default Style across every style ID
+// (Windows: <GUIConfig name="globalOverride" .../>; see Parameters.cpp:6156).
+extern NSString *const kPrefGlobalOverrideEnableFg;       // BOOL, default NO
+extern NSString *const kPrefGlobalOverrideEnableBg;       // BOOL, default NO
+extern NSString *const kPrefGlobalOverrideEnableFont;     // BOOL, default NO
+extern NSString *const kPrefGlobalOverrideEnableFontSize; // BOOL, default NO
+extern NSString *const kPrefGlobalOverrideEnableBold;     // BOOL, default NO
+extern NSString *const kPrefGlobalOverrideEnableItalic;   // BOOL, default NO
+extern NSString *const kPrefGlobalOverrideEnableUnderline;// BOOL, default NO
 extern NSString *const kPrefCopyLineNoSelection; // BOOL, default YES
 extern NSString *const kPrefSmartHighlight;      // BOOL, default YES
 extern NSString *const kPrefFillFindWithSelection;// BOOL, default YES

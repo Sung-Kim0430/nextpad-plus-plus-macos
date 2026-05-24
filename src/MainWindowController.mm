@@ -487,6 +487,18 @@ void writeConfigXML(void) {
      (edgeMode == 2) ? @"yes" : @"no",
      lineMult];
 
+    // globalOverride — issue #149, matches Windows Parameters.cpp schema
+    [xml appendFormat:@"        <GUIConfig name=\"globalOverride\" "
+     @"fg=\"%@\" bg=\"%@\" font=\"%@\" fontSize=\"%@\" "
+     @"bold=\"%@\" italic=\"%@\" underline=\"%@\" />\n",
+     _yn([ud boolForKey:kPrefGlobalOverrideEnableFg]),
+     _yn([ud boolForKey:kPrefGlobalOverrideEnableBg]),
+     _yn([ud boolForKey:kPrefGlobalOverrideEnableFont]),
+     _yn([ud boolForKey:kPrefGlobalOverrideEnableFontSize]),
+     _yn([ud boolForKey:kPrefGlobalOverrideEnableBold]),
+     _yn([ud boolForKey:kPrefGlobalOverrideEnableItalic]),
+     _yn([ud boolForKey:kPrefGlobalOverrideEnableUnderline])];
+
     [xml appendString:@"    </GUIConfigs>\n"];
     [xml appendString:@"</NotepadPlus>\n"];
 
@@ -701,6 +713,25 @@ void readConfigXML(void) {
                 double m = v.doubleValue;
                 if (m > 0) [ud setDouble:m forKey:kPrefLineHeightMultiplier];
             }
+        }
+        else if ([name isEqualToString:@"globalOverride"]) {
+            // issue #149 — Force <attr> for all styles. Matches Windows
+            // Parameters.cpp:6156 attribute names exactly.
+            NSString *v;
+            if ((v = [el attributeForName:@"fg"].stringValue))
+                [ud setBool:_ynBool(v) forKey:kPrefGlobalOverrideEnableFg];
+            if ((v = [el attributeForName:@"bg"].stringValue))
+                [ud setBool:_ynBool(v) forKey:kPrefGlobalOverrideEnableBg];
+            if ((v = [el attributeForName:@"font"].stringValue))
+                [ud setBool:_ynBool(v) forKey:kPrefGlobalOverrideEnableFont];
+            if ((v = [el attributeForName:@"fontSize"].stringValue))
+                [ud setBool:_ynBool(v) forKey:kPrefGlobalOverrideEnableFontSize];
+            if ((v = [el attributeForName:@"bold"].stringValue))
+                [ud setBool:_ynBool(v) forKey:kPrefGlobalOverrideEnableBold];
+            if ((v = [el attributeForName:@"italic"].stringValue))
+                [ud setBool:_ynBool(v) forKey:kPrefGlobalOverrideEnableItalic];
+            if ((v = [el attributeForName:@"underline"].stringValue))
+                [ud setBool:_ynBool(v) forKey:kPrefGlobalOverrideEnableUnderline];
         }
     }
     NSLog(@"[Config] Loaded preferences from %@", path);

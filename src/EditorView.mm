@@ -1300,23 +1300,37 @@ static NSColor *nppColorFromHex(NSString *hex) {
     NSColor *fg = store.globalFg;
     NSColor *bg = store.globalBg;
 
+    // Global override (issue #149) — applies to STYLE_DEFAULT too, mirroring
+    // Windows ScintillaEditView.cpp:912/928 where setStyle() substitutes
+    // from the "Global override" row even when styleID == STYLE_DEFAULT
+    // (with the transparent-override carve-out that keeps Default Style's
+    // own value).
+    NPPStyleEntry *gov = [store globalStyleNamed:@"Global override"];
+    NPPStyleEntry *gsDefault = [store globalStyleNamed:@"Default Style"];
+    NSUserDefaults *_ud = [NSUserDefaults standardUserDefaults];
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableFg]       && gov.fgColor)        fg       = gov.fgColor;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableBg]       && gov.bgColor)        bg       = gov.bgColor;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableFont]     && gov.fontName.length>0) fontName = gov.fontName;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableFontSize] && gov.fontSize > 0)   fontSize = gov.fontSize;
+    BOOL defBold      = gsDefault.bold;
+    BOOL defItalic    = gsDefault.italic;
+    BOOL defUnderline = gsDefault.underline;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableBold])      defBold      = gov.bold;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableItalic])    defItalic    = gov.italic;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableUnderline]) defUnderline = gov.underline;
+
     const char *fontNameUTF8 = fontName.UTF8String;
     [sci message:SCI_STYLESETFONT wParam:STYLE_DEFAULT lParam:(sptr_t)fontNameUTF8];
     [sci message:SCI_STYLESETSIZEFRACTIONAL wParam:STYLE_DEFAULT lParam:(sptr_t)(fontSize * 100)];
     [sci setColorProperty:SCI_STYLESETFORE parameter:STYLE_DEFAULT value:fg];
     [sci setColorProperty:SCI_STYLESETBACK parameter:STYLE_DEFAULT value:bg];
 
-    // Apply Global "Default Style" bold/italic/underline to STYLE_DEFAULT
-    // BEFORE the STYLECLEARALL below, so the propagation carries these
-    // attributes to every other style in one pass. Without this, the
-    // Style Configurator's bold/italic/underline toggles for the Global
-    // Default Style had no effect on the editor at all (the per-style
-    // applyLexerColors: pass below only iterates language-specific
-    // styles, never STYLE_DEFAULT).
-    NPPStyleEntry *gsDefault = [store globalStyleNamed:@"Default Style"];
-    [sci message:SCI_STYLESETBOLD      wParam:STYLE_DEFAULT lParam:(gsDefault.bold      ? 1 : 0)];
-    [sci message:SCI_STYLESETITALIC    wParam:STYLE_DEFAULT lParam:(gsDefault.italic    ? 1 : 0)];
-    [sci message:SCI_STYLESETUNDERLINE wParam:STYLE_DEFAULT lParam:(gsDefault.underline ? 1 : 0)];
+    // Apply effective Default Style bold/italic/underline (with override
+    // substitution if enabled) BEFORE the STYLECLEARALL below, so the
+    // propagation carries these attributes to every other style in one pass.
+    [sci message:SCI_STYLESETBOLD      wParam:STYLE_DEFAULT lParam:(defBold      ? 1 : 0)];
+    [sci message:SCI_STYLESETITALIC    wParam:STYLE_DEFAULT lParam:(defItalic    ? 1 : 0)];
+    [sci message:SCI_STYLESETUNDERLINE wParam:STYLE_DEFAULT lParam:(defUnderline ? 1 : 0)];
 
     // Propagate defaults to all styles, then re-apply language-specific colors
     [sci message:SCI_STYLECLEARALL];
@@ -1496,19 +1510,33 @@ static NSColor *nppColorFromHex(NSString *hex) {
     NPPStyleStore *storeD = [NPPStyleStore sharedStore];
     NSString *fontName = storeD.globalFontName;
     NSInteger fontSize = storeD.globalFontSize;
-    [sci message:SCI_STYLESETFONT wParam:STYLE_DEFAULT lParam:(sptr_t)fontName.UTF8String];
-    [sci message:SCI_STYLESETSIZEFRACTIONAL wParam:STYLE_DEFAULT lParam:(sptr_t)(fontSize * 100)];
     NSColor *fg = storeD.globalFg;
     NSColor *bg = storeD.globalBg;
+    NPPStyleEntry *gsDefault = [storeD globalStyleNamed:@"Default Style"];
+    BOOL defBold      = gsDefault.bold;
+    BOOL defItalic    = gsDefault.italic;
+    BOOL defUnderline = gsDefault.underline;
+
+    // Global override (issue #149) substitution for STYLE_DEFAULT — see
+    // -applyThemeColors for the rationale (Windows setStyle() applies the
+    // override to STYLE_DEFAULT too).
+    NPPStyleEntry *gov = [storeD globalStyleNamed:@"Global override"];
+    NSUserDefaults *_ud = [NSUserDefaults standardUserDefaults];
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableFg]       && gov.fgColor)         fg       = gov.fgColor;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableBg]       && gov.bgColor)         bg       = gov.bgColor;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableFont]     && gov.fontName.length>0) fontName = gov.fontName;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableFontSize] && gov.fontSize > 0)    fontSize = gov.fontSize;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableBold])      defBold      = gov.bold;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableItalic])    defItalic    = gov.italic;
+    if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableUnderline]) defUnderline = gov.underline;
+
+    [sci message:SCI_STYLESETFONT wParam:STYLE_DEFAULT lParam:(sptr_t)fontName.UTF8String];
+    [sci message:SCI_STYLESETSIZEFRACTIONAL wParam:STYLE_DEFAULT lParam:(sptr_t)(fontSize * 100)];
     [sci setColorProperty:SCI_STYLESETFORE parameter:STYLE_DEFAULT value:fg];
     [sci setColorProperty:SCI_STYLESETBACK parameter:STYLE_DEFAULT value:bg];
-    // bold / italic / underline from the Global "Default Style" entry — must
-    // be set BEFORE STYLECLEARALL so propagation carries them to every other
-    // style. Mirrors the same fix in -applyThemeColors.
-    NPPStyleEntry *gsDefault = [storeD globalStyleNamed:@"Default Style"];
-    [sci message:SCI_STYLESETBOLD      wParam:STYLE_DEFAULT lParam:(gsDefault.bold      ? 1 : 0)];
-    [sci message:SCI_STYLESETITALIC    wParam:STYLE_DEFAULT lParam:(gsDefault.italic    ? 1 : 0)];
-    [sci message:SCI_STYLESETUNDERLINE wParam:STYLE_DEFAULT lParam:(gsDefault.underline ? 1 : 0)];
+    [sci message:SCI_STYLESETBOLD      wParam:STYLE_DEFAULT lParam:(defBold      ? 1 : 0)];
+    [sci message:SCI_STYLESETITALIC    wParam:STYLE_DEFAULT lParam:(defItalic    ? 1 : 0)];
+    [sci message:SCI_STYLESETUNDERLINE wParam:STYLE_DEFAULT lParam:(defUnderline ? 1 : 0)];
 
     // 2. Propagate STYLE_DEFAULT to ALL lexer styles (must come AFTER colors are set)
     [sci message:SCI_STYLECLEARALL];
@@ -2484,19 +2512,70 @@ static const int kGitGutterMargin   = 4;  // margin index for git gutter
     NSArray<NPPStyleEntry *> *styles = [store stylesForLexer:lid];
     if (!styles.count) return;
 
+    // Global override (issue #149 — Windows parity). The source of the
+    // substituted values is the dedicated "Global override" row inside
+    // GlobalStyles — NOT "Default Style". Mirrors ScintillaEditView.cpp:900
+    // (findByName(L"Global override")). When an attribute is "transparent"
+    // on the override row (nil fg/bg, empty fontName, fontSize=0), the
+    // corresponding per-style attribute is left to fall back to STYLE_DEFAULT
+    // (we skip the SCI_STYLESET* call). Caller has just run STYLECLEARALL.
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    BOOL ovFg        = [d boolForKey:kPrefGlobalOverrideEnableFg];
+    BOOL ovBg        = [d boolForKey:kPrefGlobalOverrideEnableBg];
+    BOOL ovFont      = [d boolForKey:kPrefGlobalOverrideEnableFont];
+    BOOL ovFontSize  = [d boolForKey:kPrefGlobalOverrideEnableFontSize];
+    BOOL ovBold      = [d boolForKey:kPrefGlobalOverrideEnableBold];
+    BOOL ovItalic    = [d boolForKey:kPrefGlobalOverrideEnableItalic];
+    BOOL ovUnderline = [d boolForKey:kPrefGlobalOverrideEnableUnderline];
+    NPPStyleEntry *gov = (ovFg || ovBg || ovFont || ovFontSize ||
+                          ovBold || ovItalic || ovUnderline)
+                       ? [store globalStyleNamed:@"Global override"] : nil;
+
     for (NPPStyleEntry *e in styles) {
         int sid = e.styleID;
-        if (e.fgColor)
+
+        // fg
+        if (ovFg && gov) {
+            if (gov.fgColor)
+                [sci setColorProperty:SCI_STYLESETFORE parameter:sid value:gov.fgColor];
+            // else: leave at STYLE_DEFAULT (transparent override → inherit)
+        } else if (e.fgColor) {
             [sci setColorProperty:SCI_STYLESETFORE parameter:sid value:e.fgColor];
-        if (e.bgColor)
+        }
+
+        // bg
+        if (ovBg && gov) {
+            if (gov.bgColor)
+                [sci setColorProperty:SCI_STYLESETBACK parameter:sid value:gov.bgColor];
+        } else if (e.bgColor) {
             [sci setColorProperty:SCI_STYLESETBACK parameter:sid value:e.bgColor];
-        if (e.fontName.length > 0)
+        }
+
+        // font name
+        if (ovFont && gov) {
+            if (gov.fontName.length > 0)
+                [sci message:SCI_STYLESETFONT wParam:sid lParam:(sptr_t)gov.fontName.UTF8String];
+        } else if (e.fontName.length > 0) {
             [sci message:SCI_STYLESETFONT wParam:sid lParam:(sptr_t)e.fontName.UTF8String];
-        if (e.fontSize > 0)
+        }
+
+        // font size
+        if (ovFontSize && gov) {
+            if (gov.fontSize > 0)
+                [sci message:SCI_STYLESETSIZEFRACTIONAL wParam:sid lParam:(sptr_t)(gov.fontSize * 100)];
+        } else if (e.fontSize > 0) {
             [sci message:SCI_STYLESETSIZEFRACTIONAL wParam:sid lParam:(sptr_t)(e.fontSize * 100)];
-        [sci message:SCI_STYLESETBOLD      wParam:sid lParam:e.bold      ? 1 : 0];
-        [sci message:SCI_STYLESETITALIC    wParam:sid lParam:e.italic    ? 1 : 0];
-        [sci message:SCI_STYLESETUNDERLINE wParam:sid lParam:e.underline ? 1 : 0];
+        }
+
+        // bold / italic / underline — the override row's value substitutes
+        // directly. Caller already pushed STYLE_DEFAULT's font-style bits,
+        // so absent flags fall through to the default via STYLECLEARALL.
+        BOOL bold      = (ovBold      && gov) ? gov.bold      : e.bold;
+        BOOL italic    = (ovItalic    && gov) ? gov.italic    : e.italic;
+        BOOL underline = (ovUnderline && gov) ? gov.underline : e.underline;
+        [sci message:SCI_STYLESETBOLD      wParam:sid lParam:bold      ? 1 : 0];
+        [sci message:SCI_STYLESETITALIC    wParam:sid lParam:italic    ? 1 : 0];
+        [sci message:SCI_STYLESETUNDERLINE wParam:sid lParam:underline ? 1 : 0];
     }
 }
 

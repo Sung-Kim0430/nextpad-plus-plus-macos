@@ -39,6 +39,13 @@ NSString *const kPrefScrollBeyondLastLine= @"scrollBeyondLastLine";
 NSString *const kPrefCaretBlinkRate      = @"caretBlinkRate";
 NSString *const kPrefFontQuality         = @"fontQuality";
 NSString *const kPrefLineHeightMultiplier = @"lineHeightMultiplier";
+NSString *const kPrefGlobalOverrideEnableFg        = @"globalOverrideEnableFg";
+NSString *const kPrefGlobalOverrideEnableBg        = @"globalOverrideEnableBg";
+NSString *const kPrefGlobalOverrideEnableFont      = @"globalOverrideEnableFont";
+NSString *const kPrefGlobalOverrideEnableFontSize  = @"globalOverrideEnableFontSize";
+NSString *const kPrefGlobalOverrideEnableBold      = @"globalOverrideEnableBold";
+NSString *const kPrefGlobalOverrideEnableItalic    = @"globalOverrideEnableItalic";
+NSString *const kPrefGlobalOverrideEnableUnderline = @"globalOverrideEnableUnderline";
 NSString *const kPrefCopyLineNoSelection = @"copyLineNoSelection";
 NSString *const kPrefSmartHighlight      = @"smartHighlight";
 NSString *const kPrefFillFindWithSelection = @"fillFindWithSelection";
@@ -190,6 +197,13 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefCaretBlinkRate:       @500,
         kPrefFontQuality:          @3,   // 0=default 1=none 2=antialiased 3=LCD
         kPrefLineHeightMultiplier: @1.0, // 1.0 = no extra spacing (current behavior)
+        kPrefGlobalOverrideEnableFg:        @NO,
+        kPrefGlobalOverrideEnableBg:        @NO,
+        kPrefGlobalOverrideEnableFont:      @NO,
+        kPrefGlobalOverrideEnableFontSize:  @NO,
+        kPrefGlobalOverrideEnableBold:      @NO,
+        kPrefGlobalOverrideEnableItalic:    @NO,
+        kPrefGlobalOverrideEnableUnderline: @NO,
         kPrefCopyLineNoSelection:  @YES,
         kPrefSmartHighlight:       @YES,
         kPrefFillFindWithSelection:@YES,
