@@ -1378,6 +1378,37 @@ static NSColor *nppColorFromHex(NSString *hex) {
     // Re-apply language colors with the new theme palette
     if (_currentLanguage.length) [self applyLexerColors:_currentLanguage];
 
+    // Issue #149 — line spacing depends on SCI_TEXTHEIGHT, which depends on
+    // the font we just (re-)set. Recompute the extra ascent/descent here so
+    // a font/theme change resizes the line padding proportionally.
+    [self applyLineSpacingFromDefaults];
+}
+
+/// Issue #149 — apply the user's "Line spacing" multiplier (1.0/1.2/1.3/1.4/1.5)
+/// as extra ascent + descent in pixels, proportional to the current line height.
+/// Idempotent: resets extras to 0 before measuring so SCI_TEXTHEIGHT returns
+/// the *unmodified* base height (otherwise repeated calls would compound).
+/// Splits the total extra half-above / half-below so the caret stays visually
+/// centered between lines.
+- (void)applyLineSpacingFromDefaults {
+    ScintillaView *sci = _scintillaView;
+    if (!sci) return;
+    // Clear any prior extras first — guarantees SCI_TEXTHEIGHT returns the
+    // base (font-only) height, not a previously-inflated value.
+    [sci message:SCI_SETEXTRAASCENT  wParam:0 lParam:0];
+    [sci message:SCI_SETEXTRADESCENT wParam:0 lParam:0];
+
+    double mult = [[NSUserDefaults standardUserDefaults] doubleForKey:kPrefLineHeightMultiplier];
+    if (mult <= 1.0) return;  // 1.0 (or zero/missing pref) = no extras, no work
+
+    sptr_t baseH = [sci message:SCI_TEXTHEIGHT wParam:0 lParam:0];
+    if (baseH <= 0) return;   // pre-setup view; nothing to scale
+    sptr_t total = (sptr_t)llround((double)baseH * (mult - 1.0));
+    if (total <= 0) return;
+    sptr_t ascent  = total / 2;
+    sptr_t descent = total - ascent;
+    [sci message:SCI_SETEXTRAASCENT  wParam:(uptr_t)ascent  lParam:0];
+    [sci message:SCI_SETEXTRADESCENT wParam:(uptr_t)descent lParam:0];
 }
 
 /// Re-apply Global Styles that use Scintilla style IDs (STYLE_LINENUMBER=33,
@@ -2179,6 +2210,10 @@ static int vkToScintillaKey(int vk) {
         [s message:SCI_INDICATORCLEARRANGE wParam:0 lParam:[s message:SCI_GETLENGTH]];
         [self updateClickableLinks];
     }
+
+    // Issue #149 — apply line-spacing multiplier here too (idempotent with the
+    // applyThemeColors call). Covers pref changes that don't change the theme.
+    [self applyLineSpacingFromDefaults];
 }
 
 // Cached at first read so subsequent loads don't have to round-trip through

@@ -460,6 +460,8 @@ void writeConfigXML(void) {
      _yn(fileAutoDetect), _yn(fileUpdateSilent)];
 
     // ScintillaPrimaryView
+    double lineMult = [ud doubleForKey:kPrefLineHeightMultiplier];
+    if (lineMult <= 0) lineMult = 1.0;  // guard against stale/zero values
     [xml appendFormat:@"        <GUIConfig name=\"ScintillaPrimaryView\" "
      @"lineNumberMargin=\"%@\" lineNumberDynamicWidth=\"%@\" "
      @"bookMarkMargin=\"%@\" folderMarkStyle=\"%@\" "
@@ -470,7 +472,8 @@ void writeConfigXML(void) {
      @"whiteSpaceShow=\"%@\" eolShow=\"%@\" eolMode=\"%ld\" "
      @"zoom=\"%ld\" smoothFont=\"%ld\" "
      @"paddingLeft=\"%ld\" paddingRight=\"%ld\" "
-     @"edgeMultiColumnPos=\"%@\" isEdgeBgMode=\"%@\" />\n",
+     @"edgeMultiColumnPos=\"%@\" isEdgeBgMode=\"%@\" "
+     @"lineHeightMultiplier=\"%g\" />\n",
      _sh(showLineNum), _yn(dynLineNum),
      _sh(showBookmark), foldStr,
      _yn(virtualSpace), _yn(scrollBeyond),
@@ -481,7 +484,8 @@ void writeConfigXML(void) {
      (long)zoom, (long)fontQual,
      (long)padL, (long)padR,
      edgeCol > 0 ? [NSString stringWithFormat:@"%ld", (long)edgeCol] : @"",
-     (edgeMode == 2) ? @"yes" : @"no"];
+     (edgeMode == 2) ? @"yes" : @"no",
+     lineMult];
 
     [xml appendString:@"    </GUIConfigs>\n"];
     [xml appendString:@"</NotepadPlus>\n"];
@@ -693,6 +697,10 @@ void readConfigXML(void) {
             if ((v = [el attributeForName:@"isEdgeBgMode"].stringValue))
                 [ud setInteger:_ynBool(v) ? 2 : ([ud integerForKey:kPrefEdgeColumn] > 0 ? 1 : 0)
                         forKey:kPrefEdgeMode];
+            if ((v = [el attributeForName:@"lineHeightMultiplier"].stringValue)) {
+                double m = v.doubleValue;
+                if (m > 0) [ud setDouble:m forKey:kPrefLineHeightMultiplier];
+            }
         }
     }
     NSLog(@"[Config] Loaded preferences from %@", path);

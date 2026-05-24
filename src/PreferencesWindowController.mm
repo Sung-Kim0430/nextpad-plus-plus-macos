@@ -38,6 +38,7 @@ NSString *const kPrefVirtualSpace        = @"virtualSpace";
 NSString *const kPrefScrollBeyondLastLine= @"scrollBeyondLastLine";
 NSString *const kPrefCaretBlinkRate      = @"caretBlinkRate";
 NSString *const kPrefFontQuality         = @"fontQuality";
+NSString *const kPrefLineHeightMultiplier = @"lineHeightMultiplier";
 NSString *const kPrefCopyLineNoSelection = @"copyLineNoSelection";
 NSString *const kPrefSmartHighlight      = @"smartHighlight";
 NSString *const kPrefFillFindWithSelection = @"fillFindWithSelection";
@@ -188,6 +189,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefScrollBeyondLastLine: @NO,
         kPrefCaretBlinkRate:       @500,
         kPrefFontQuality:          @3,   // 0=default 1=none 2=antialiased 3=LCD
+        kPrefLineHeightMultiplier: @1.0, // 1.0 = no extra spacing (current behavior)
         kPrefCopyLineNoSelection:  @YES,
         kPrefSmartHighlight:       @YES,
         kPrefFillFindWithSelection:@YES,
@@ -838,6 +840,25 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     [fqPopup selectItemAtIndex:[ud integerForKey:kPrefFontQuality]];
     fqPopup.tag = 705; fqPopup.target = self; fqPopup.action = @selector(prefChanged:);
     [v addSubview:fqPopup];
+
+    // Line spacing (issue #149) — multiplier presets applied as extra ascent
+    // + descent in pixels (Scintilla SCI_SETEXTRAASCENT/DESCENT). 1.0 = current.
+    y -= 32;
+    NSTextField *lsLabel = [NSTextField labelWithString:[loc translate:@"Line spacing:"]];
+    lsLabel.frame = NSMakeRect(20, y, 120, 20);
+    [v addSubview:lsLabel];
+    NSPopUpButton *lsPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(150, y-2, 180, 26) pullsDown:NO];
+    [lsPopup addItemsWithTitles:@[
+        [loc translate:@"1.0 (Default)"], @"1.2", @"1.3", @"1.4", @"1.5"]];
+    static const double kLineHeightPresets[5] = {1.0, 1.2, 1.3, 1.4, 1.5};
+    double curMult = [ud doubleForKey:kPrefLineHeightMultiplier];
+    NSInteger lsIdx = 0;
+    for (NSInteger i = 0; i < 5; i++) {
+        if (fabs(curMult - kLineHeightPresets[i]) < 1e-6) { lsIdx = i; break; }
+    }
+    [lsPopup selectItemAtIndex:lsIdx];
+    lsPopup.tag = 712; lsPopup.target = self; lsPopup.action = @selector(prefChanged:);
+    [v addSubview:lsPopup];
 
     return v;
 }
@@ -2001,6 +2022,13 @@ static NSDictionary<NSString *, NSString *> *_langDisplayNames() {
         case 709: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefShowBookmarkMargin]; break;
         case 710: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefShowEOL]; break;
         case 711: [ud setBool:[(NSButton *)sender state] == NSControlStateValueOn forKey:kPrefShowWhitespace]; break;
+        case 712: {  // Line spacing multiplier (issue #149)
+            static const double kPresets[5] = {1.0, 1.2, 1.3, 1.4, 1.5};
+            NSInteger idx = [(NSPopUpButton *)sender indexOfSelectedItem];
+            if (idx < 0 || idx >= 5) idx = 0;
+            [ud setDouble:kPresets[idx] forKey:kPrefLineHeightMultiplier];
+            break;
+        }
         // Margins
         case 1100: [ud setInteger:[(NSTextField *)sender integerValue] forKey:kPrefEdgeColumn]; break;
         case 1101: [ud setInteger:[(NSPopUpButton *)sender indexOfSelectedItem] forKey:kPrefEdgeMode]; break;
