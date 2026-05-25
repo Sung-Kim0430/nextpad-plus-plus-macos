@@ -694,9 +694,25 @@ static intptr_t _npp_run_on_main(intptr_t (^block)(void)) {
         }
 
         case NPPM_GETFULLPATHFROMBUFFERID: {
-            // wParam = bufferID (EditorView*), lParam = char* buffer to fill
-            EditorView *ed = (__bridge EditorView *)(void *)wParam;
+            // wParam = bufferID (EditorView*), lParam = char* buffer to fill (≥ 1024).
+            //
+            // Crash-safe on bogus wParam: must NOT trigger ARC retain. Storing
+            // the __bridge cast result in a __strong local would call
+            // objc_retain on whatever wParam happens to be — a plugin that
+            // cached a now-freed bufferID would crash the host. Walk the
+            // host's own editor list and only adopt the pointer once it's
+            // verified to be one of ours. Mirrors NPPM_GETPOSFROMBUFFERID below.
+            MainWindowController *mwc = _mwc;
+            void *target = (void *)wParam;
             char *buf = (char *)lParam;
+            if (!mwc || !target) {
+                if (buf) buf[0] = '\0';
+                return 0;
+            }
+            EditorView *ed = nil;
+            for (EditorView *cand in nppAllEditors(mwc, 0)) {
+                if ((__bridge void *)cand == target) { ed = cand; break; }
+            }
             if (ed && ed.filePath && buf) {
                 strlcpy(buf, ed.filePath.UTF8String, 1024);
                 return (intptr_t)strlen(buf);
