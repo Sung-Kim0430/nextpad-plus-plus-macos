@@ -979,6 +979,12 @@ static NSToolbarItemIdentifier const kTBGroup8  = @"TB_G8";  // panels
 static NSToolbarItemIdentifier const kTBGroup9  = @"TB_G9";  // monitoring
 static NSToolbarItemIdentifier const kTBGroup10 = @"TB_G10"; // macro
 
+// Default-mode plugin grouping: plugin toolbar buttons are packed into one
+// toolbar item per plugin (grouped by plugin directory). The item identifier is
+// this prefix followed by the plugin's group key (its pluginDir). See
+// -makePluginGroupToolbarItemForKey: and -_rebuildPluginToolbarGroups.
+static NSString *const kTBPluginGroupPrefix = @"TB_PluginGrp:";
+
 // ── Toolbar metric helpers ──────────────────────────────────────────────────
 // Single source of truth for toolbar button + icon dimensions and gaps. All
 // values derive from kPrefToolbarIconScale (50/75/90/100/125/150 %), with
@@ -1979,36 +1985,183 @@ static NSDictionary<NSString *, NSArray *> *toolbarGroupMap(void) {
     }];
     [_pluginToolbarItems addObject:pti];
 
-    // Insert before the flexible space (which is the second-to-last item)
+    // DEFAULT mode: plugins are packed into one toolbar item per plugin (grouped
+    // by pluginDir) so a plugin that registers several icons gets them sitting
+    // tightly together, with separators bracketing multi-icon plugin groups.
+    // USER-CONFIG mode keeps the legacy per-icon individual items (in that mode
+    // plugins also appear inside the single kTBUserConfig item built at load).
     NSToolbar *tb = self.window.toolbar;
-    NSInteger insertIdx = tb.items.count;
-    for (NSInteger i = 0; i < (NSInteger)tb.items.count; i++) {
-        if ([tb.items[i].itemIdentifier isEqualToString:NSToolbarFlexibleSpaceItemIdentifier]) {
-            insertIdx = i;
-            break;
+    if ([_toolbarConfig[@"hasUserConfig"] boolValue]) {
+        NSInteger insertIdx = tb.items.count;
+        for (NSInteger i = 0; i < (NSInteger)tb.items.count; i++) {
+            if ([tb.items[i].itemIdentifier isEqualToString:NSToolbarFlexibleSpaceItemIdentifier]) {
+                insertIdx = i;
+                break;
+            }
         }
+        [tb insertItemWithItemIdentifier:ident atIndex:insertIdx];
+    } else {
+        [self _rebuildPluginToolbarGroups];
     }
-    [tb insertItemWithItemIdentifier:ident atIndex:insertIdx];
-
-    // When the first plugin icon appears, the last standard group (macro) gains
-    // a trailing divider so plugin icons are visually separated. The group item
-    // was built before plugins loaded, so rebuild it once to pick up the divider.
-    if (_pluginToolbarItems.count == 1) [self _refreshLastStandardGroupDivider];
 }
 
-// Default mode only: rebuild the macro group (kTBGroup10) so makeGroupToolbarItem:
-// re-evaluates its trailing-divider condition (now that plugins are present).
-// No-op in user-config mode, where plugin buttons live inside the single
-// kTBUserConfig item and already get their own separator.
-- (void)_refreshLastStandardGroupDivider {
-    NSToolbar *tb = self.window.toolbar;
-    NSInteger idx = NSNotFound;
-    for (NSInteger i = 0; i < (NSInteger)tb.items.count; i++) {
-        if ([tb.items[i].itemIdentifier isEqualToString:kTBGroup10]) { idx = i; break; }
+// Group key for a plugin toolbar item: its pluginDir, so all icons registered by
+// one plugin share a group. Falls back to the item id for entries lacking a dir.
+static NSString *npPluginGroupKey(NSDictionary *pti) {
+    NSString *dir = pti[@"pluginDir"];
+    return dir.length ? dir : pti[@"id"];
+}
+
+// Distinct plugin group keys in first-registration order.
+- (NSArray<NSString *> *)_orderedPluginGroupKeys {
+    NSMutableArray<NSString *> *keys = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (NSDictionary *pti in _pluginToolbarItems) {
+        NSString *k = npPluginGroupKey(pti);
+        if (![seen containsObject:k]) { [seen addObject:k]; [keys addObject:k]; }
     }
-    if (idx == NSNotFound) return;   // user-config mode (no separate macro group)
-    [tb removeItemAtIndex:idx];
-    [tb insertItemWithItemIdentifier:kTBGroup10 atIndex:idx];
+    return keys;
+}
+
+// DEFAULT mode only: rebuild the per-plugin group toolbar items. Removes every
+// existing plugin-group item and reinserts one per plugin (in registration order)
+// just before the flexible space. A full rebuild keeps separator bracketing
+// consistent — turning one plugin from single- to multi-icon can change a
+// neighbour's leading separator (see -makePluginGroupToolbarItemForKey:).
+- (void)_rebuildPluginToolbarGroups {
+    NSToolbar *tb = self.window.toolbar;
+    if (!tb) return;
+
+    // Remove existing plugin-group items (high → low index keeps indices valid).
+    for (NSInteger i = (NSInteger)tb.items.count - 1; i >= 0; i--) {
+        if ([tb.items[i].itemIdentifier hasPrefix:kTBPluginGroupPrefix])
+            [tb removeItemAtIndex:i];
+    }
+
+    // Reinsert one item per plugin group, each before the flexible space.
+    for (NSString *key in [self _orderedPluginGroupKeys]) {
+        NSInteger insertIdx = tb.items.count;
+        for (NSInteger i = 0; i < (NSInteger)tb.items.count; i++) {
+            if ([tb.items[i].itemIdentifier isEqualToString:NSToolbarFlexibleSpaceItemIdentifier]) {
+                insertIdx = i;
+                break;
+            }
+        }
+        [tb insertItemWithItemIdentifier:[kTBPluginGroupPrefix stringByAppendingString:key]
+                                 atIndex:insertIdx];
+    }
+}
+
+// Build the toolbar item for one plugin group (all icons whose group key matches).
+// Buttons pack at nppSpacing(); a multi-icon group is bracketed by vertical
+// separators like the dividers between standard groups. To avoid doubled dividers
+// the leading separator is drawn only when there isn't already one to the left:
+//   • leading separator  ⇔  (group is first)  OR  (multi-icon AND prev group single-icon)
+//   • trailing separator ⇔  multi-icon
+// The first group's leading separator also divides the standard buttons from the
+// plugin section (the macro group no longer draws a trailing divider for plugins).
+- (NSToolbarItem *)makePluginGroupToolbarItemForKey:(NSString *)groupKey {
+    const CGFloat kBtnSize  = nppBtnSize();
+    const CGFloat kSpacing  = nppSpacing();
+    const CGFloat kSepInner = 4.0;  // gap between a separator and the adjacent button
+    const CGFloat kSepOuter = 3.0;  // gap between a separator and the item edge
+
+    // This group's plugin entries, in registration order.
+    NSMutableArray<NSDictionary *> *members = [NSMutableArray array];
+    for (NSDictionary *pti in _pluginToolbarItems)
+        if ([npPluginGroupKey(pti) isEqualToString:groupKey]) [members addObject:pti];
+    if (members.count == 0) return nil;
+
+    NSArray<NSString *> *orderedKeys = [self _orderedPluginGroupKeys];
+    NSInteger idx = (NSInteger)[orderedKeys indexOfObject:groupKey];
+    BOOL isFirst = (idx == 0);
+    BOOL isMulti = members.count > 1;
+
+    BOOL prevIsMulti = NO;
+    if (idx > 0) {
+        NSString *prevKey = orderedKeys[idx - 1];
+        NSUInteger cnt = 0;
+        for (NSDictionary *pti in _pluginToolbarItems)
+            if ([npPluginGroupKey(pti) isEqualToString:prevKey]) cnt++;
+        prevIsMulti = (cnt > 1);
+    }
+    BOOL drawLeading  = isFirst || (isMulti && !prevIsMulti);
+    BOOL drawTrailing = isMulti;
+
+    NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, kBtnSize, kBtnSize)];
+    CGFloat x = 0;
+
+    if (drawLeading) {
+        x += kSepOuter;
+        [container addSubview:[[NppSeparatorView alloc]
+            initWithFrame:NSMakeRect(x, 0, 1, kBtnSize)]];
+        x += 1 + kSepInner;
+    }
+
+    NSUInteger j = 0;
+    for (NSDictionary *pti in members) {
+        if (j > 0) x += kSpacing;
+        NppToolbarButton *btn = [[NppToolbarButton alloc]
+            initWithFrame:NSMakeRect(x, 0, kBtnSize, kBtnSize)];
+        NSImage *icon = pti[@"icon"];
+        icon.size = NSMakeSize(nppIconSize(), nppIconSize());
+        btn.image   = icon;
+        btn.toolTip = pti[@"tooltip"];
+        btn.tag     = [pti[@"cmdID"] intValue];
+        btn.target  = self;
+        btn.action  = @selector(pluginToolbarAction:);
+        // NOTE: deliberately no btn.identifier — that keeps the dark-mode reskin
+        // loop (_reskinToolbarIcons) from reloading plugin icons via
+        // nppToolbarIcon(); plugin icons are refreshed by _refreshPluginToolbarIcons.
+        [container addSubview:btn];
+        x += kBtnSize;
+        j++;
+    }
+
+    if (drawTrailing) {
+        x += kSepInner;
+        [container addSubview:[[NppSeparatorView alloc]
+            initWithFrame:NSMakeRect(x, 0, 1, kBtnSize)]];
+        x += 1 + kSepOuter;
+    }
+
+    NSRect cf = container.frame; cf.size.width = x; container.frame = cf;
+
+    NSToolbarItem *item = [[NSToolbarItem alloc]
+        initWithItemIdentifier:[kTBPluginGroupPrefix stringByAppendingString:groupKey]];
+    item.view    = container;
+    item.minSize = NSMakeSize(x, kBtnSize);
+    item.maxSize = NSMakeSize(x, kBtnSize);
+
+    // Overflow (≫) menu: a single-icon group is one actionable item; a multi-icon
+    // group becomes a submenu of its actions so nothing is lost when collapsed.
+    if (members.count == 1) {
+        NSDictionary *pti = members[0];
+        NSString *title = pti[@"tooltip"] ?: groupKey.lastPathComponent ?: @"";
+        NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:title
+            action:@selector(pluginToolbarAction:) keyEquivalent:@""];
+        mi.target  = self;
+        mi.tag     = [pti[@"cmdID"] intValue];
+        item.label = title;
+        item.menuFormRepresentation = mi;
+    } else {
+        NSString *groupTitle = groupKey.lastPathComponent ?: @"Plugin";
+        NSMenuItem *parent = [[NSMenuItem alloc] initWithTitle:groupTitle
+            action:nil keyEquivalent:@""];
+        NSMenu *sub = [[NSMenu alloc] initWithTitle:groupTitle];
+        for (NSDictionary *pti in members) {
+            NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:(pti[@"tooltip"] ?: @"")
+                action:@selector(pluginToolbarAction:) keyEquivalent:@""];
+            mi.target = self;
+            mi.tag    = [pti[@"cmdID"] intValue];
+            [sub addItem:mi];
+        }
+        parent.submenu = sub;
+        item.label = groupTitle;
+        item.menuFormRepresentation = parent;
+    }
+
+    return item;
 }
 
 // Try `filename` against each directory in `dirs` in order. Returns the
@@ -2097,29 +2250,44 @@ static NSImage *_loadPluginIconFromDirs(NSArray<NSString *> *dirs, NSString *fil
     if (!_pluginToolbarItems.count) return;
 
     NSToolbar *toolbar = self.window.toolbar;
+
+    // Re-resolve every plugin icon for the current appearance. The resolver also
+    // re-applies the toolbar colorization prefs, so this covers both the
+    // dark/light flip and the "colorize plugin icons" preference change.
     for (NSMutableDictionary *pti in _pluginToolbarItems) {
         NSString *pluginDir = pti[@"pluginDir"];
         if (pluginDir.length == 0) continue;
+        NSImage *newIcon = [self _resolvePluginToolbarIconForDir:pluginDir hint:pti[@"iconHint"]];
+        if (newIcon) pti[@"icon"] = newIcon;
+    }
 
-        NSString *iconHint = pti[@"iconHint"];
-        NSImage *newIcon = [self _resolvePluginToolbarIconForDir:pluginDir hint:iconHint];
-        if (!newIcon) continue;
+    // cmdID → freshly-resolved icon, for updating the live buttons below.
+    NSMutableDictionary<NSNumber *, NSImage *> *iconByCmd = [NSMutableDictionary dictionary];
+    for (NSDictionary *pti in _pluginToolbarItems)
+        if (pti[@"icon"]) iconByCmd[pti[@"cmdID"]] = pti[@"icon"];
 
-        pti[@"icon"] = newIcon;
+    // Update live buttons. A plugin button lives either as a plugin item's view
+    // directly (user-config mode: "TB_Plugin_<cmdID>") or as a subview of a
+    // plugin-group container (default mode). Both carry btn.tag == cmdID. Items
+    // collapsed into the overflow chevron aren't in -items; their cached icon is
+    // picked up on the next layout pass via the builders.
+    for (NSToolbarItem *item in toolbar.items) {
+        NSString *ident = item.itemIdentifier;
+        if (!([ident hasPrefix:kTBPluginGroupPrefix] || [ident hasPrefix:@"TB_Plugin_"]))
+            continue;
 
-        // Update the live button if currently in the toolbar (item may have
-        // been removed if the user collapsed it into the overflow chevron —
-        // in that case the cached icon updates and the next layout pass
-        // picks it up via makePluginToolbarItem:).
-        for (NSToolbarItem *item in toolbar.items) {
-            if (![item.itemIdentifier isEqualToString:pti[@"id"]]) continue;
-            NSView *v = item.view;
-            if (![v isKindOfClass:[NSButton class]]) continue;
-            NSButton *btn = (NSButton *)v;
-            // Match the logical size that makePluginToolbarItem: applies.
-            newIcon.size = NSMakeSize(nppIconSize(), nppIconSize());
-            btn.image = newIcon;
-            break;
+        NSMutableArray<NSButton *> *buttons = [NSMutableArray array];
+        if ([item.view isKindOfClass:[NSButton class]]) {
+            [buttons addObject:(NSButton *)item.view];
+        } else {
+            for (NSView *sub in item.view.subviews)
+                if ([sub isKindOfClass:[NSButton class]]) [buttons addObject:(NSButton *)sub];
+        }
+        for (NSButton *btn in buttons) {
+            NSImage *icon = iconByCmd[@(btn.tag)];
+            if (!icon) continue;
+            icon.size = NSMakeSize(nppIconSize(), nppIconSize());
+            btn.image = icon;
         }
     }
 }
@@ -2213,7 +2381,12 @@ static NSToolbarItemIdentifier const kTBUserConfig = @"TB_UserConfig";
     if ([ident isEqualToString:kTBGroup7])
         return [self makeViewTogglesGroupToolbarItem];
 
-    // Plugin toolbar items
+    // Plugin group items (default mode): one item per plugin, packed tightly.
+    if ([ident hasPrefix:kTBPluginGroupPrefix])
+        return [self makePluginGroupToolbarItemForKey:
+                    [ident substringFromIndex:kTBPluginGroupPrefix.length]];
+
+    // Individual plugin items (user-config mode): one item per icon.
     for (NSDictionary *pti in _pluginToolbarItems) {
         if ([pti[@"id"] isEqualToString:ident]) {
             return [self makePluginToolbarItem:pti];
@@ -2429,11 +2602,11 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     }
     if (idents.count == 0) return nil; // entire group hidden
 
-    // The last standard group (macro) normally has no trailing separator, but
-    // gains one when plugin icons are present so the plugin section is visually
-    // separated — matching the dividers between the other standard groups.
-    BOOL hasSep = groupHasTrailingSep(ident) ||
-                  ([ident isEqualToString:kTBGroup10] && _pluginToolbarItems.count > 0);
+    // The divider between the standard buttons and the plugin section is now
+    // drawn by the first plugin group's leading separator (see
+    // -makePluginGroupToolbarItemForKey:), so the macro group keeps its normal
+    // "no trailing separator" rule regardless of whether plugins are present.
+    BOOL hasSep = groupHasTrailingSep(ident);
     NSInteger n = (NSInteger)idents.count;
     CGFloat buttonsW = n * kBtnSize + (n - 1) * kSpacing;
     CGFloat totalW = buttonsW + (hasSep ? kSepPadL + 1 + kSepPadR : 0);
