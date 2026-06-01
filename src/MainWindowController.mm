@@ -1510,7 +1510,7 @@ static NSImage *_customToolbarIcon(NSString *buttonId, NSDictionary *toolbarConf
 // clicking it pops a menu of those items. Custom-drawn (Tahoe profile only) — this
 // is what NSToolbarItemGroup can't do (it renders a separate ellipsis button and
 // can't make the label a dropdown). Used via -makeTahoeGroupToolbarItem:.
-static const CGFloat kTGOuterX   = 10.0;  // outer margin each side → gap BETWEEN pills
+static const CGFloat kTGOuterX   = 3.0;   // small outer margin; main gap comes from a system space item between groups (see _tahoeDefaultItemIdentifiers)
 static const CGFloat kTGPadX     = 11.0;  // pill inset L/R (generous, mockup-like)
 static const CGFloat kTGPadTop   = 8.0;   // pill inset top
 static const CGFloat kTGPadBot   = 6.0;   // pill inset bottom
@@ -1586,29 +1586,30 @@ static const CGFloat kTGRadius   = 12.0;  // pill corner radius (rounded, mockup
 
 - (void)drawRect:(NSRect)dirtyRect {
     BOOL dark = [NppThemeManager shared].isDark;
-    // Light cool-gray pill (the mockup's translucent glass over a blue desktop reads
-    // as a light blue-white; we approximate with a clearly-visible light surface).
-    NSColor *fill = dark
-        ? [NSColor colorWithRed:1.00 green:1.00 blue:1.00 alpha:0.10]
-        : [NSColor colorWithRed:0.965 green:0.975 blue:0.99 alpha:0.92];
     // Inset by the outer margin so each pill is separated from its neighbours.
     NSRect cap = NSInsetRect(self.bounds, kTGOuterX, 1.0);
     NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:cap
                                                       xRadius:kTGRadius yRadius:kTGRadius];
-    [fill setFill];
-    [p fill];
 
-    // Hint of a darker border around the pill (mockup).
-    NSColor *border = dark ? [NSColor colorWithWhite:1.0 alpha:0.12]
-                           : [NSColor colorWithWhite:0.0 alpha:0.11];
-    p.lineWidth = 1.0;
+    // Subtle top-light → bottom-darker gradient = a gentle "raised" volume.
+    NSColor *top = dark ? [NSColor colorWithWhite:1.0 alpha:0.14]
+                        : [NSColor colorWithRed:0.995 green:1.0  blue:1.0   alpha:0.95];
+    NSColor *bot = dark ? [NSColor colorWithWhite:1.0 alpha:0.06]
+                        : [NSColor colorWithRed:0.925 green:0.94 blue:0.965 alpha:0.95];
+    NSGradient *g = [[NSGradient alloc] initWithStartingColor:top endingColor:bot];
+    [g drawInBezierPath:p angle:-90];   // -90° → start (light) at top, end (darker) at bottom
+
+    // Border — only a few tones darker (soft).
+    NSColor *border = dark ? [NSColor colorWithWhite:1.0 alpha:0.10]
+                           : [NSColor colorWithWhite:0.0 alpha:0.065];
+    p.lineWidth = 0.75;
     [border setStroke];
     [p stroke];
 
     // Barely-visible divider between the icon row and the label.
     CGFloat dy = kTGPadBot + kTGLabelH + kTGLabelGap * 0.5;
-    NSColor *div = dark ? [NSColor colorWithWhite:1.0 alpha:0.10]
-                        : [NSColor colorWithWhite:0.0 alpha:0.07];
+    NSColor *div = dark ? [NSColor colorWithWhite:1.0 alpha:0.09]
+                        : [NSColor colorWithWhite:0.0 alpha:0.06];
     NSBezierPath *line = [NSBezierPath bezierPath];
     line.lineWidth = 1.0;
     [line moveToPoint:NSMakePoint(NSMinX(cap) + 8, dy)];
@@ -2511,10 +2512,19 @@ static NSToolbarItemIdentifier const kTBUserConfig = @"TB_UserConfig";
 // the tab controls.
 - (NSArray<NSToolbarItemIdentifier> *)_tahoeDefaultItemIdentifiers:(NSToolbar *)tb {
     NSMutableArray<NSToolbarItemIdentifier> *ids = [NSMutableArray array];
-    for (NSArray *g in tahoeToolbarGroups())
+    // A system Space item BETWEEN each group breaks the macOS-26 auto-grouping that
+    // otherwise wraps all adjacent items in one enclosing glass bar, so each pill
+    // stands alone (and the space provides the visible gap between pills).
+    BOOL first = YES;
+    for (NSArray *g in tahoeToolbarGroups()) {
+        if (!first) [ids addObject:NSToolbarSpaceItemIdentifier];
+        first = NO;
         [ids addObject:[kTBTahoeGroupPrefix stringByAppendingString:g[0]]];
-    if (_pluginToolbarItems.count > 0)
+    }
+    if (_pluginToolbarItems.count > 0) {
+        [ids addObject:NSToolbarSpaceItemIdentifier];
         [ids addObject:kTBTahoePluginsGroup];
+    }
     [ids addObject:NSToolbarFlexibleSpaceItemIdentifier];
     [ids addObject:kTBTabControls];
     return ids;
