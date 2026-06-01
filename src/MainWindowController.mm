@@ -1938,10 +1938,18 @@ static NSDictionary<NSString *, NSArray *> *toolbarGroupMap(void) {
         tb.allowsDisplayModeCustomization = NO;
     }
     self.window.toolbar = tb;
-    // Expanded style puts the toolbar in its own row below the title bar,
-    // so items are always left-aligned (not scattered around a centered title).
     if (@available(macOS 11.0, *)) {
-        self.window.toolbarStyle = NSWindowToolbarStyleExpanded;
+        if ([NppThemeManager shared].usesGlassMaterials) {
+            // Tahoe profile (Step 3b): unified toolbar merged into a transparent
+            // titlebar so the system renders the chrome with its translucent
+            // material. Gated — Classic is untouched.
+            self.window.toolbarStyle = NSWindowToolbarStyleUnified;
+            self.window.titlebarAppearsTransparent = YES;
+        } else {
+            // Classic (default): expanded style puts the toolbar in its own row
+            // below the title bar, so items are always left-aligned.
+            self.window.toolbarStyle = NSWindowToolbarStyleExpanded;
+        }
     }
 }
 
@@ -3087,7 +3095,25 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     _statusBar = [[NSView alloc] init];
     _statusBar.translatesAutoresizingMaskIntoConstraints = NO;
     _statusBar.wantsLayer = YES;
-    _statusBar.layer.backgroundColor = [NppThemeManager shared].statusBarBackground.CGColor;
+    if ([NppThemeManager shared].usesGlassMaterials) {
+        // Tahoe profile (Step 3b): translucent status bar. A behind-window
+        // NSVisualEffectView backs the bar; the opaque layer color is left unset
+        // (clear) so the material shows through. Gated — Classic is untouched.
+        NSVisualEffectView *vfx = [[NSVisualEffectView alloc] init];
+        vfx.translatesAutoresizingMaskIntoConstraints = NO;
+        vfx.material = [[NppThemeManager shared] materialForRole:NppMaterialRoleStatusBar];
+        vfx.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+        vfx.state = NSVisualEffectStateFollowsWindowActiveState;
+        [_statusBar addSubview:vfx positioned:NSWindowBelow relativeTo:nil];
+        [NSLayoutConstraint activateConstraints:@[
+            [vfx.topAnchor      constraintEqualToAnchor:_statusBar.topAnchor],
+            [vfx.bottomAnchor   constraintEqualToAnchor:_statusBar.bottomAnchor],
+            [vfx.leadingAnchor  constraintEqualToAnchor:_statusBar.leadingAnchor],
+            [vfx.trailingAnchor constraintEqualToAnchor:_statusBar.trailingAnchor],
+        ]];
+    } else {
+        _statusBar.layer.backgroundColor = [NppThemeManager shared].statusBarBackground.CGColor;
+    }
 
     NSBox *sep = [[NSBox alloc] init];
     sep.boxType = NSBoxSeparator;
@@ -8991,8 +9017,11 @@ static BOOL _writeCLIScript(NSString *script, NSString *path, NSError **outErr) 
 }
 
 - (void)_darkModeChanged:(NSNotification *)n {
-    // Re-assign CGColor on status bar (snapshot needs refresh)
-    _statusBar.layer.backgroundColor = [NppThemeManager shared].statusBarBackground.CGColor;
+    // Re-assign CGColor on status bar (snapshot needs refresh). Skipped under the
+    // Tahoe profile, where the status bar is backed by a translucent
+    // NSVisualEffectView and the layer color is intentionally left clear.
+    if (![NppThemeManager shared].usesGlassMaterials)
+        _statusBar.layer.backgroundColor = [NppThemeManager shared].statusBarBackground.CGColor;
 
     // Auto mode: switch editor theme to match system appearance
     if ([NppThemeManager shared].mode == NppDarkModeAuto) {
