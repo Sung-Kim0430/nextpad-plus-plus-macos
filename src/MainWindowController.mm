@@ -985,6 +985,11 @@ static NSToolbarItemIdentifier const kTBGroup10 = @"TB_G10"; // macro
 // -makePluginGroupToolbarItemForKey: and -_rebuildPluginToolbarGroups.
 static NSString *const kTBPluginGroupPrefix = @"TB_PluginGrp:";
 
+// Tahoe profile: one NSToolbarItemGroup per semantic cluster (File/Edit/…). The
+// item identifier is this prefix + the group label. See -makeTahoeGroupToolbarItem:
+// and tahoeToolbarGroups(). Built only when the effective profile is Tahoe.
+static NSString *const kTBTahoeGroupPrefix = @"TB_TGroup:";
+
 // ── Toolbar metric helpers ──────────────────────────────────────────────────
 // Single source of truth for toolbar button + icon dimensions and gaps. All
 // values derive from kPrefToolbarIconScale (50/75/90/100/125/150 %), with
@@ -1665,6 +1670,25 @@ static NSDictionary<NSString *, NSArray *> *toolbarGroupMap(void) {
     };
 }
 
+// Tahoe profile toolbar grouping: ordered [groupLabel, [button identifiers]].
+// Each becomes an NSToolbarItemGroup (→ a Liquid Glass capsule on macOS 26). This
+// is a SEPARATE construction from the Classic toolbarGroupMap (parallel-paths) —
+// it includes the view-toggle buttons (Classic handles those specially). First
+// 3c slice: plain labeled subitems; dropdowns/segmented/plugins come later.
+static NSArray<NSArray *> *tahoeToolbarGroups(void) {
+    return @[
+        @[@"File",    @[kTBNew, kTBOpen, kTBSave, kTBSaveAll, kTBClose, kTBCloseAll, kTBPrint]],
+        @[@"Edit",    @[kTBCut, kTBCopy, kTBPaste, kTBUndo, kTBRedo]],
+        @[@"Find",    @[kTBFind, kTBFindRep]],
+        @[@"Zoom",    @[kTBZoomIn, kTBZoomOut]],
+        @[@"View",    @[kTBWrap, kTBAllChars, kTBIndentGuide]],
+        @[@"Sync",    @[kTBSyncV, kTBSyncH]],
+        @[@"Panels",  @[kTBUDL, kTBDocMap, kTBDocList, kTBFuncList, kTBFileBrowser]],
+        @[@"Monitor", @[kTBMonitor]],
+        @[@"Macro",   @[kTBStartRecord, kTBStopRecord, kTBPlayRecord, kTBPlayRecordM, kTBSaveRecord]],
+    ];
+}
+
 @interface MainWindowController ()
     <TabManagerDelegate, NSWindowDelegate,
      NSToolbarDelegate, FindReplacePanelDelegate, NSUserInterfaceValidations,
@@ -1920,7 +1944,12 @@ static NSDictionary<NSString *, NSArray *> *toolbarGroupMap(void) {
     NSToolbar *tb = [[NSToolbar alloc] initWithIdentifier:@"NppToolbar"];
     tb.delegate = self;
     tb.allowsUserCustomization = NO;
-    tb.displayMode = NSToolbarDisplayModeIconOnly;
+    // Classic packs several buttons into one custom-view NSToolbarItem (no per-item
+    // label → Icon-only). The Tahoe profile uses real per-button items inside
+    // NSToolbarItemGroups, so it renders labels (Icon and Label).
+    tb.displayMode = [NppThemeManager shared].usesGlassMaterials
+        ? NSToolbarDisplayModeIconAndLabel
+        : NSToolbarDisplayModeIconOnly;
     // Issue #26: each NSToolbarItem in our setup wraps a multi-button custom
     // view, not a single labelled button — so there's no per-item label to
     // render in "Icon and Text" mode. Hide the display-mode picker from the
@@ -1938,18 +1967,13 @@ static NSDictionary<NSString *, NSArray *> *toolbarGroupMap(void) {
         tb.allowsDisplayModeCustomization = NO;
     }
     self.window.toolbar = tb;
+    // Expanded style keeps the toolbar in its OWN row below the title bar for
+    // BOTH profiles — matching the Classic layout and the Tahoe mockup. (3b first
+    // tried NSWindowToolbarStyleUnified for Tahoe, but that crammed the icons up
+    // into the title row; reverted.) On macOS 26 a 26-SDK build gets Liquid Glass
+    // chrome automatically — no manual unified/transparent switch needed.
     if (@available(macOS 11.0, *)) {
-        if ([NppThemeManager shared].usesGlassMaterials) {
-            // Tahoe profile (Step 3b): unified toolbar merged into a transparent
-            // titlebar so the system renders the chrome with its translucent
-            // material. Gated — Classic is untouched.
-            self.window.toolbarStyle = NSWindowToolbarStyleUnified;
-            self.window.titlebarAppearsTransparent = YES;
-        } else {
-            // Classic (default): expanded style puts the toolbar in its own row
-            // below the title bar, so items are always left-aligned.
-            self.window.toolbarStyle = NSWindowToolbarStyleExpanded;
-        }
+        self.window.toolbarStyle = NSWindowToolbarStyleExpanded;
     }
 }
 
@@ -2361,10 +2385,16 @@ static NSToolbarItemIdentifier const kTBUserConfig = @"TB_UserConfig";
     return [self _classicDefaultItemIdentifiers:tb];
 }
 
-// Tahoe profile (Step 3c). STUB — identical to Classic until the grouped/labeled
-// Liquid Glass toolbar is built. Keeps the appearance fork exercisable now.
+// Tahoe profile (Step 3c, first slice): one NSToolbarItemGroup per semantic
+// cluster (tahoeToolbarGroups()), then flexible space + the tab controls. Plugins
+// and user-config still fall back to the Classic builders for now.
 - (NSArray<NSToolbarItemIdentifier> *)_tahoeDefaultItemIdentifiers:(NSToolbar *)tb {
-    return [self _classicDefaultItemIdentifiers:tb];
+    NSMutableArray<NSToolbarItemIdentifier> *ids = [NSMutableArray array];
+    for (NSArray *g in tahoeToolbarGroups())
+        [ids addObject:[kTBTahoeGroupPrefix stringByAppendingString:g[0]]];
+    [ids addObject:NSToolbarFlexibleSpaceItemIdentifier];
+    [ids addObject:kTBTabControls];
+    return ids;
 }
 
 // Classic profile (current default): today's group layout.
@@ -2401,10 +2431,60 @@ static NSToolbarItemIdentifier const kTBUserConfig = @"TB_UserConfig";
     return [self _classicToolbarItemForIdentifier:ident];
 }
 
-// Tahoe profile (Step 3c). STUB — identical to Classic until the Liquid Glass
-// toolbar (per-button items + NSToolbarItemGroups) is built.
+// Tahoe profile (Step 3c, first slice): build an NSToolbarItemGroup for each
+// semantic cluster; reuse the Classic tab-controls item; fall back to Classic for
+// anything else (plugins, user-config) for now.
 - (NSToolbarItem *)_tahoeToolbarItemForIdentifier:(NSToolbarItemIdentifier)ident {
+    if ([ident isEqualToString:kTBTabControls])
+        return [self makeTabControlsToolbarItem];
+    if ([ident hasPrefix:kTBTahoeGroupPrefix]) {
+        NSString *label = [ident substringFromIndex:kTBTahoeGroupPrefix.length];
+        for (NSArray *g in tahoeToolbarGroups())
+            if ([g[0] isEqualToString:label])
+                return [self makeTahoeGroupToolbarItem:ident label:label identifiers:g[1]];
+        return nil;
+    }
     return [self _classicToolbarItemForIdentifier:ident];
+}
+
+// Build one Tahoe group: per-button NSToolbarItem subitems (current PNG icons +
+// labels) wrapped in an NSToolbarItemGroup. On macOS 26 the group renders as a
+// Liquid Glass capsule; on older macOS as a plain labeled group. Respects the
+// toolbar-config hidden-button set. (First slice: momentary buttons, no
+// dropdowns/segmented/toggle-state — those are later slices.)
+- (NSToolbarItem *)makeTahoeGroupToolbarItem:(NSString *)groupIdent
+                                       label:(NSString *)groupLabel
+                                 identifiers:(NSArray *)idents {
+    NSMutableDictionary *descMap = [NSMutableDictionary dictionary];
+    for (NSArray *d in toolbarDescriptors()) descMap[d[0]] = d;
+    NSSet *hiddenIDs = _toolbarConfig[@"hiddenIDs"];
+    const CGFloat iconSz = [NppThemeManager shared].toolbarMetrics.iconSize;
+
+    NSMutableArray<NSToolbarItem *> *subs = [NSMutableArray array];
+    for (NSString *btnId in idents) {
+        if ([hiddenIDs containsObject:btnId]) continue;
+        NSArray *desc = descMap[btnId];
+        if (!desc) continue;
+        NSToolbarItem *sub = [[NSToolbarItem alloc]
+            initWithItemIdentifier:[@"TBT_" stringByAppendingString:btnId]];
+        NSImage *img = nppToolbarIcon(desc[3]);
+        if (img) { img.size = NSMakeSize(iconSz, iconSz); sub.image = img; }
+        sub.label        = desc[1];
+        sub.paletteLabel = desc[1];
+        sub.toolTip      = desc[2];
+        sub.target       = self;
+        sub.action       = NSSelectorFromString(desc[4]);
+        [subs addObject:sub];
+    }
+    if (subs.count == 0) return nil;
+
+    NSToolbarItemGroup *group = [[NSToolbarItemGroup alloc] initWithItemIdentifier:groupIdent];
+    group.subitems     = subs;
+    group.label        = groupLabel;
+    group.paletteLabel = groupLabel;
+    if (@available(macOS 10.13, *))
+        group.selectionMode = NSToolbarItemGroupSelectionModeMomentary;
+    return group;
 }
 
 // Classic profile (current default): today's group / plugin item builders.
