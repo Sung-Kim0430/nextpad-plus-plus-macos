@@ -1510,7 +1510,7 @@ static NSImage *_customToolbarIcon(NSString *buttonId, NSDictionary *toolbarConf
 // clicking it pops a menu of those items. Custom-drawn (Tahoe profile only) — this
 // is what NSToolbarItemGroup can't do (it renders a separate ellipsis button and
 // can't make the label a dropdown). Used via -makeTahoeGroupToolbarItem:.
-static const CGFloat kTGOuterX   = 3.0;   // small outer margin; main gap comes from a system space item between groups (see _tahoeDefaultItemIdentifiers)
+static const CGFloat kTGOuterX   = 0.0;   // no outer margin: the pill fills the item so it covers the per-item system glass (else it peeks out as a white "remnant"). The gap between pills comes from a system Space item.
 static const CGFloat kTGPadX     = 11.0;  // pill inset L/R (generous, mockup-like)
 static const CGFloat kTGPadTop   = 8.0;   // pill inset top
 static const CGFloat kTGPadBot   = 6.0;   // pill inset bottom
@@ -1586,8 +1586,9 @@ static const CGFloat kTGRadius   = 12.0;  // pill corner radius (rounded, mockup
 
 - (void)drawRect:(NSRect)dirtyRect {
     BOOL dark = [NppThemeManager shared].isDark;
-    // Inset by the outer margin so each pill is separated from its neighbours.
-    NSRect cap = NSInsetRect(self.bounds, kTGOuterX, 1.0);
+    // Fill (almost) the whole item so we cover the per-item system glass; the 1px
+    // inset is just so the border stroke isn't clipped at the edges.
+    NSRect cap = NSInsetRect(self.bounds, 1.0, 1.0);
     NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:cap
                                                       xRadius:kTGRadius yRadius:kTGRadius];
 
@@ -2698,21 +2699,27 @@ static NSToolbarItemIdentifier const kTBUserConfig = @"TB_UserConfig";
 }
 
 // Default(Tahoe) mode: rebuild the single Plugins capsule as plugins register
-// their icons dynamically. Removes the existing item (if any) and reinserts it
-// just before the flexible space.
+// their icons dynamically. Removes the existing item (and the Space we inserted
+// before it) and reinserts both just before the flexible space — the leading
+// Space gives the same inter-pill gap the static groups get.
 - (void)_rebuildTahoePluginsGroup {
     NSToolbar *tb = self.window.toolbar;
     if (!tb) return;
     for (NSInteger i = (NSInteger)tb.items.count - 1; i >= 0; i--)
-        if ([tb.items[i].itemIdentifier isEqualToString:kTBTahoePluginsGroup])
+        if ([tb.items[i].itemIdentifier isEqualToString:kTBTahoePluginsGroup]) {
             [tb removeItemAtIndex:i];
+            if (i - 1 >= 0 &&
+                [tb.items[i - 1].itemIdentifier isEqualToString:NSToolbarSpaceItemIdentifier])
+                [tb removeItemAtIndex:i - 1];
+        }
     if (_pluginToolbarItems.count == 0) return;
     NSInteger insertIdx = tb.items.count;
     for (NSInteger i = 0; i < (NSInteger)tb.items.count; i++)
         if ([tb.items[i].itemIdentifier isEqualToString:NSToolbarFlexibleSpaceItemIdentifier]) {
             insertIdx = i; break;
         }
-    [tb insertItemWithItemIdentifier:kTBTahoePluginsGroup atIndex:insertIdx];
+    [tb insertItemWithItemIdentifier:NSToolbarSpaceItemIdentifier atIndex:insertIdx];
+    [tb insertItemWithItemIdentifier:kTBTahoePluginsGroup atIndex:insertIdx + 1];
 }
 
 // Classic profile (current default): today's group / plugin item builders.
