@@ -1597,6 +1597,24 @@ static const CGFloat kTGRadius   = 12.0;  // pill corner radius (rounded, mockup
                                                       xRadius:kTGRadius yRadius:kTGRadius];
     [fill setFill];
     [p fill];
+
+    // Hint of a darker border around the pill (mockup).
+    NSColor *border = dark ? [NSColor colorWithWhite:1.0 alpha:0.12]
+                           : [NSColor colorWithWhite:0.0 alpha:0.11];
+    p.lineWidth = 1.0;
+    [border setStroke];
+    [p stroke];
+
+    // Barely-visible divider between the icon row and the label.
+    CGFloat dy = kTGPadBot + kTGLabelH + kTGLabelGap * 0.5;
+    NSColor *div = dark ? [NSColor colorWithWhite:1.0 alpha:0.10]
+                        : [NSColor colorWithWhite:0.0 alpha:0.07];
+    NSBezierPath *line = [NSBezierPath bezierPath];
+    line.lineWidth = 1.0;
+    [line moveToPoint:NSMakePoint(NSMinX(cap) + 8, dy)];
+    [line lineToPoint:NSMakePoint(NSMaxX(cap) - 8, dy)];
+    [div setStroke];
+    [line stroke];
 }
 @end
 
@@ -2067,12 +2085,13 @@ static NSArray<NSArray *> *tahoeToolbarGroups(void) {
     }
     self.window.toolbar = tb;
     // Expanded style keeps the toolbar in its OWN row below the title bar for
-    // BOTH profiles — matching the Classic layout and the Tahoe mockup. (3b first
-    // tried NSWindowToolbarStyleUnified for Tahoe, but that crammed the icons up
-    // into the title row; reverted.) On macOS 26 a 26-SDK build gets Liquid Glass
-    // chrome automatically — no manual unified/transparent switch needed.
+    // BOTH profiles — matching the Classic layout and the Tahoe mockup. (Unified
+    // crammed the icons into the title row, so we don't use it.) For Tahoe we make
+    // the titlebar transparent so the opaque chrome strip behind the pill groups
+    // drops away and each pill reads as a separate floating element.
     if (@available(macOS 11.0, *)) {
         self.window.toolbarStyle = NSWindowToolbarStyleExpanded;
+        self.window.titlebarAppearsTransparent = [NppThemeManager shared].usesGlassMaterials;
     }
 }
 
