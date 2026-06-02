@@ -184,7 +184,29 @@ static const CGFloat kPinSize = 11.0; // pin icon drawn at ~80% of original ~14p
     [tabPath closePath];
 
     // ── Fill ──────────────────────────────────────────────────────────────────
-    if (_isSelected) {
+    if (TM.usesGlassMaterials) {
+        // Tahoe: flat tabs. The per-tab color (the "apply color to tabs" feature)
+        // is painted as a full-tab TRANSLUCENT vertical gradient instead of the
+        // Classic 3px accent stripe; uncolored tabs stay neutral/flat. The Classic
+        // branch below is left byte-for-byte unchanged.
+        NSColor *base = tabColorForId(_colorId);          // nil when no custom color assigned
+        if (!base && _isSelected) base = accentColor();   // default active tab → Classic orange accent gradient
+        [NSGraphicsContext saveGraphicsState];
+        [tabPath addClip];
+        if (base) {
+            CGFloat topA = _isSelected ? 0.42 : (_hovered ? 0.30 : 0.22);
+            CGFloat botA = _isSelected ? 0.24 : (_hovered ? 0.16 : 0.12);
+            NSGradient *g = [[NSGradient alloc]
+                initWithStartingColor:[base colorWithAlphaComponent:topA]
+                          endingColor:[base colorWithAlphaComponent:botA]];
+            [g drawInRect:self.bounds angle:270];
+        } else if (_hovered) {
+            [TM.hoverTabFill setFill];
+            NSRectFill(self.bounds);
+        }
+        // inactive + uncolored → no fill (the flat bar background shows through)
+        [NSGraphicsContext restoreGraphicsState];
+    } else if (_isSelected) {
         [activeTabColor() setFill];
         [tabPath fill];
     } else {
@@ -202,16 +224,20 @@ static const CGFloat kPinSize = 11.0; // pin icon drawn at ~80% of original ~14p
     tabPath.lineWidth = 0.5;
     [tabPath stroke];
 
-    // ── Accent stripe: 3px at top, clipped to tab shape ─────────────────────
+    // ── Accent stripe: 3px at top, clipped to tab shape (CLASSIC ONLY) ──────
     // Active tab always shows a stripe (per-tab color or default orange).
     // Inactive tabs with a color assigned also show the stripe.
-    NSColor *stripe = tabColorForId(_colorId) ?: accentColor();
-    if (_isSelected || _colorId >= 0) {
-        [NSGraphicsContext saveGraphicsState];
-        [tabPath addClip];
-        [stripe setFill];
-        NSRectFill(NSMakeRect(0, h - 3, w, 3));
-        [NSGraphicsContext restoreGraphicsState];
+    // Tahoe shows the per-tab color as a full-tab translucent tint (Fill above),
+    // so the stripe is suppressed there.
+    if (!TM.usesGlassMaterials) {
+        NSColor *stripe = tabColorForId(_colorId) ?: accentColor();
+        if (_isSelected || _colorId >= 0) {
+            [NSGraphicsContext saveGraphicsState];
+            [tabPath addClip];
+            [stripe setFill];
+            NSRectFill(NSMakeRect(0, h - 3, w, 3));
+            [NSGraphicsContext restoreGraphicsState];
+        }
     }
 
     // ── Floppy icon ───────────────────────────────────────────────────────────
