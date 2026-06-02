@@ -169,7 +169,8 @@ static const CGFloat kPinSize = 11.0; // pin icon drawn at ~80% of original ~14p
 - (void)drawRect:(NSRect)dirtyRect {
     CGFloat w = self.bounds.size.width;
     CGFloat h = self.bounds.size.height;
-    CGFloat r = 2.0;
+    // Tahoe: same top-corner rounding as the editor/panel cards (8pt). Classic: 2pt.
+    CGFloat r = TM.usesGlassMaterials ? 8.0 : 2.0;
 
     // ── Tab shape: rounded top corners, flat bottom ───────────────────────────
     NSBezierPath *tabPath = [NSBezierPath bezierPath];
@@ -220,7 +221,18 @@ static const CGFloat kPinSize = 11.0; // pin icon drawn at ~80% of original ~14p
     }
 
     // ── Border ────────────────────────────────────────────────────────────────
-    [tabBorderColor() setStroke];
+    if (TM.usesGlassMaterials) {
+        // Tahoe: a soft border only a few tones darker than the tab itself — for a
+        // colored tab a slightly stronger shade of its own color; for an uncolored
+        // tab a faint dark outline. (Classic keeps the grey tabBorder, untouched.)
+        NSColor *bbase = tabColorForId(_colorId);
+        if (!bbase && _isSelected) bbase = accentColor();
+        NSColor *bcol = bbase ? [bbase colorWithAlphaComponent:0.6]
+                              : [NSColor colorWithWhite:0.0 alpha:0.12];
+        [bcol setStroke];
+    } else {
+        [tabBorderColor() setStroke];
+    }
     tabPath.lineWidth = 0.5;
     [tabPath stroke];
 
