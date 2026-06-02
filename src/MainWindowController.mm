@@ -1,4 +1,5 @@
 #import "MainWindowController.h"
+#import <QuartzCore/QuartzCore.h>   // CAGradientLayer (Tahoe window backdrop)
 #import "AppDelegate.h"
 #import "NppBuiltinLanguages.h"
 #import "NppCommandLineParams.h"
@@ -1828,6 +1829,44 @@ static NSArray<NSArray *> *tahoeToolbarGroups(void) {
     ];
 }
 
+// Tahoe-only: an NSSplitView whose divider is a wide, fully transparent GAP so
+// the rounded editor/panel cards float apart with the window backdrop showing
+// between them (macOS-26 inset look). Gated — under Classic it behaves exactly
+// like a stock thin-divider NSSplitView. Used for _editorSplitView.
+@interface NppGapSplitView : NSSplitView
+@property (nonatomic) CGFloat tahoeGap;   // divider thickness under Tahoe (transparent)
+@end
+@implementation NppGapSplitView
+- (instancetype)initWithFrame:(NSRect)frameRect {
+    if ((self = [super initWithFrame:frameRect])) _tahoeGap = 12.0;
+    return self;
+}
+- (CGFloat)dividerThickness {
+    if ([NppThemeManager shared].usesGlassMaterials) return _tahoeGap;
+    return [super dividerThickness];
+}
+- (void)drawDividerInRect:(NSRect)rect {
+    if ([NppThemeManager shared].usesGlassMaterials) return;  // transparent → backdrop shows
+    [super drawDividerInRect:rect];
+}
+@end
+
+// Tahoe-only window backdrop: a diagonal gradient (#dce7fd top-left → #f5f3f6
+// bottom-right). Its backing layer IS the gradient, so it resizes automatically
+// with the window. Gated — only instantiated under Tahoe.
+@interface NppGradientView : NSView
+@end
+@implementation NppGradientView
+- (CALayer *)makeBackingLayer {
+    CAGradientLayer *g = [CAGradientLayer layer];
+    g.colors = @[ (id)[NSColor colorWithSRGBRed:0xDC/255.0 green:0xE7/255.0 blue:0xFD/255.0 alpha:1.0].CGColor,
+                  (id)[NSColor colorWithSRGBRed:0xF5/255.0 green:0xF3/255.0 blue:0xF6/255.0 alpha:1.0].CGColor ];
+    g.startPoint = CGPointMake(0.0, 1.0);   // top-left
+    g.endPoint   = CGPointMake(1.0, 0.0);   // bottom-right
+    return g;
+}
+@end
+
 @interface MainWindowController ()
     <TabManagerDelegate, NSWindowDelegate,
      NSToolbarDelegate, FindReplacePanelDelegate, NSUserInterfaceValidations,
@@ -1957,6 +1996,14 @@ static NSArray<NSArray *> *tahoeToolbarGroups(void) {
     window.title = @"Nextpad++";
     window.minSize = NSMakeSize(480, 320);
     [window center];
+
+    // Tahoe: let the content view fill the whole window (under the titlebar +
+    // toolbar) so the gradient backdrop covers the title/toolbar area too. The
+    // editor stack is repinned to contentLayoutGuide (below the toolbar) in the
+    // content layout. Gated — Classic keeps the standard below-titlebar content.
+    if ([NppThemeManager shared].usesGlassMaterials) {
+        window.styleMask |= NSWindowStyleMaskFullSizeContentView;
+    }
 
     self = [super initWithWindow:window];
     if (self) {
@@ -3348,6 +3395,13 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     // Primary container wraps tab bar + editor content
     NSView *primaryContainer = [[NSView alloc] init];
     primaryContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    // Tahoe: round the editor "card" corners (macOS-26 inset content look).
+    // Gated — Classic stays full-bleed with square corners.
+    if ([NppThemeManager shared].usesGlassMaterials) {
+        primaryContainer.wantsLayer = YES;
+        primaryContainer.layer.cornerRadius  = 8.0;
+        primaryContainer.layer.masksToBounds = YES;
+    }
     [primaryContainer addSubview:primaryTabBar];
     [primaryContainer addSubview:primaryContentView];
     [NSLayoutConstraint activateConstraints:@[
@@ -3454,21 +3508,11 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     _statusBar.translatesAutoresizingMaskIntoConstraints = NO;
     _statusBar.wantsLayer = YES;
     if ([NppThemeManager shared].usesGlassMaterials) {
-        // Tahoe profile (Step 3b): translucent status bar. A behind-window
-        // NSVisualEffectView backs the bar; the opaque layer color is left unset
-        // (clear) so the material shows through. Gated — Classic is untouched.
-        NSVisualEffectView *vfx = [[NSVisualEffectView alloc] init];
-        vfx.translatesAutoresizingMaskIntoConstraints = NO;
-        vfx.material = [[NppThemeManager shared] materialForRole:NppMaterialRoleStatusBar];
-        vfx.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-        vfx.state = NSVisualEffectStateFollowsWindowActiveState;
-        [_statusBar addSubview:vfx positioned:NSWindowBelow relativeTo:nil];
-        [NSLayoutConstraint activateConstraints:@[
-            [vfx.topAnchor      constraintEqualToAnchor:_statusBar.topAnchor],
-            [vfx.bottomAnchor   constraintEqualToAnchor:_statusBar.bottomAnchor],
-            [vfx.leadingAnchor  constraintEqualToAnchor:_statusBar.leadingAnchor],
-            [vfx.trailingAnchor constraintEqualToAnchor:_statusBar.trailingAnchor],
-        ]];
+        // Tahoe: blend the status bar into the window backdrop — no fill of its
+        // own (the content-wide backdrop VFX shows through the clear layer) and,
+        // below, no top separator. The status info then reads as sitting at the
+        // bottom of the translucent window. Gated — Classic keeps its opaque bar.
+        _statusBar.layer.backgroundColor = NSColor.clearColor.CGColor;
     } else {
         _statusBar.layer.backgroundColor = [NppThemeManager shared].statusBarBackground.CGColor;
     }
@@ -3476,6 +3520,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     NSBox *sep = [[NSBox alloc] init];
     sep.boxType = NSBoxSeparator;
     sep.translatesAutoresizingMaskIntoConstraints = NO;
+    sep.hidden = [NppThemeManager shared].usesGlassMaterials;  // Tahoe: no hard top line (blended)
     [_statusBar addSubview:sep];
 
     _statusLeft  = [self makeStatusLabel:NSTextAlignmentLeft];
@@ -3541,13 +3586,19 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     _sidePanelHost.translatesAutoresizingMaskIntoConstraints = NO;
     _sidePanelHost.delegate = self;  // receive PanelFrame close callbacks
 
-    _editorSplitView = [[NSSplitView alloc] init];
+    _editorSplitView = [[NppGapSplitView alloc] init];   // Tahoe: transparent gap between editor & panel cards (gated)
     _editorSplitView.vertical = YES;
     _editorSplitView.dividerStyle = NSSplitViewDividerStyleThin;
     _editorSplitView.delegate = self;
     _editorSplitView.translatesAutoresizingMaskIntoConstraints = NO;
     [_editorSplitView addSubview:_hSplitView];
     [_editorSplitView addSubview:_sidePanelHost];
+    // Tahoe: round the side-panel "card" corners to match the editor card. Gated.
+    if ([NppThemeManager shared].usesGlassMaterials) {
+        _sidePanelHost.wantsLayer = YES;
+        _sidePanelHost.layer.cornerRadius  = 8.0;
+        _sidePanelHost.layer.masksToBounds = YES;
+    }
 
     [_hSplitView.widthAnchor constraintGreaterThanOrEqualToConstant:200].active = YES;
     [_sidePanelHost.widthAnchor constraintGreaterThanOrEqualToConstant:150].active = YES;
@@ -3556,13 +3607,48 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     _searchResultsPanel = [[SearchResultsPanel alloc] init];
     _searchResultsPanel.delegate = self;
 
-    _searchSplitView = [[NSSplitView alloc] init];
+    _searchSplitView = [[NppGapSplitView alloc] init];
+    ((NppGapSplitView *)_searchSplitView).tahoeGap = 2.0;  // thin, transparent in Tahoe (no grey divider line)
     _searchSplitView.vertical = NO; // horizontal split: top/bottom
     _searchSplitView.dividerStyle = NSSplitViewDividerStyleThin;
     _searchSplitView.delegate = self;
     _searchSplitView.translatesAutoresizingMaskIntoConstraints = NO;
     [_searchSplitView addSubview:_editorSplitView];
     [_searchSplitView addSubview:_searchResultsPanel];
+
+    // Tahoe: a single translucent window backdrop behind everything. The rounded
+    // editor/panel cards (opaque) float on it; the inset margins, the inter-card
+    // gap, and the (now-transparent) status bar all show it through — giving the
+    // "items sitting on a translucent window" look. Gated — never added in Classic.
+    if ([NppThemeManager shared].usesGlassMaterials) {
+        // Translucent base (real-HW desktop blur) ...
+        NSVisualEffectView *backdrop = [[NSVisualEffectView alloc] init];
+        backdrop.translatesAutoresizingMaskIntoConstraints = NO;
+        backdrop.material     = NSVisualEffectMaterialUnderWindowBackground;
+        backdrop.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+        backdrop.state        = NSVisualEffectStateFollowsWindowActiveState;
+        [content addSubview:backdrop positioned:NSWindowBelow relativeTo:nil];
+        // ... tinted by the #dce7fd → #f5f3f6 diagonal gradient (slightly
+        // translucent so the material/desktop shows through → "translucent window").
+        NppGradientView *grad = [[NppGradientView alloc] init];
+        grad.translatesAutoresizingMaskIntoConstraints = NO;
+        grad.wantsLayer  = YES;
+        grad.alphaValue  = 0.9;
+        [content addSubview:grad positioned:NSWindowAbove relativeTo:backdrop];
+        for (NSView *bg in @[backdrop, grad]) {
+            [NSLayoutConstraint activateConstraints:@[
+                [bg.topAnchor      constraintEqualToAnchor:content.topAnchor],
+                [bg.bottomAnchor   constraintEqualToAnchor:content.bottomAnchor],
+                [bg.leadingAnchor  constraintEqualToAnchor:content.leadingAnchor],
+                [bg.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+            ]];
+        }
+        // The find panel / incremental search bar collapse to height 0 but their
+        // top NSBox separators would still draw a stray 1pt line just above the
+        // status bar. Clip them so a 0-height bar shows nothing. Gated.
+        _findPanel.layer.masksToBounds   = YES;
+        _incSearchBar.layer.masksToBounds = YES;
+    }
 
     for (NSView *v in @[_searchSplitView, _incSearchBar, _findPanel, _statusBar]) {
         [content addSubview:v];
@@ -3571,12 +3657,22 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     _incSearchBarHeightConstraint = [_incSearchBar.heightAnchor constraintEqualToConstant:0];
     _findPanelHeightConstraint = [_findPanel.heightAnchor constraintEqualToConstant:0];
 
+    // Tahoe: inset the editor/panel area from the window edges so the rounded
+    // cards float on the window background (macOS-26 inset content look). Gated —
+    // Classic stays edge-to-edge (insets 0). The find panel / status bar below
+    // keep their full-width pins.
+    BOOL _tahoeGlass = [NppThemeManager shared].usesGlassMaterials;
+    CGFloat edgeInset = _tahoeGlass ? 8.0 : 0.0;
+    CGFloat topInset  = _tahoeGlass ? 6.0 : 0.0;
+
     [NSLayoutConstraint activateConstraints:@[
-        // Search split view fills from top to incremental search bar
-        [_searchSplitView.topAnchor constraintEqualToAnchor:content.topAnchor],
-        [_searchSplitView.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
-        [_searchSplitView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
-        [_searchSplitView.bottomAnchor constraintEqualToAnchor:_incSearchBar.topAnchor],
+        // Search split view fills from top to incremental search bar. In Tahoe the
+        // content view spans the whole window (FullSizeContentView), so pin the top
+        // to contentLayoutGuide (below the titlebar+toolbar) instead of content.top.
+        [_searchSplitView.topAnchor constraintEqualToAnchor:(_tahoeGlass ? ((NSLayoutGuide *)self.window.contentLayoutGuide).topAnchor : content.topAnchor) constant:topInset],
+        [_searchSplitView.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:edgeInset],
+        [_searchSplitView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-edgeInset],
+        [_searchSplitView.bottomAnchor constraintEqualToAnchor:_incSearchBar.topAnchor constant:(_tahoeGlass ? -6.0 : 0.0)],
 
         // Incremental search bar (sits between editor and find panel)
         [_incSearchBar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
