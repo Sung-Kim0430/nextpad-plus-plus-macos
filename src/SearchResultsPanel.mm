@@ -58,6 +58,13 @@ struct _SRLineInfo {
     if (self) {
         [self _buildUI];
         [self _applyTheme];
+        // Tahoe: rounded-card corners to match the editor / side panels. Gated —
+        // Classic stays square.
+        if ([NppThemeManager shared].usesGlassMaterials) {
+            self.wantsLayer = YES;
+            self.layer.cornerRadius  = 8.0;
+            self.layer.masksToBounds = YES;
+        }
         _markingsStruct._length   = 0;
         _markingsStruct._markings = nullptr;
         _wordWrapEnabled = [[NSUserDefaults standardUserDefaults] boolForKey:@"SearchResultsWordWrap"];

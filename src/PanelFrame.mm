@@ -242,10 +242,10 @@ static NSImage *_PFLoadIcon(NSString *name) {
 
 - (void)_buildLayout {
     self.translatesAutoresizingMaskIntoConstraints = NO;
-    // Tahoe gets a slightly taller, lighter, more-padded header (sleeker, closer
-    // to the mockup). Classic keeps its exact 24pt / 11pt / 6pt metrics.
-    BOOL glass = [NppThemeManager shared].usesGlassMaterials;
-    _headerH = glass ? 28.0 : 24.0;
+    // 24pt header / 11pt title / 6pt leading for both profiles. Tahoe keeps the
+    // glass header material + white body (applied in _applyThemeColors) but matches
+    // Classic's compact metrics.
+    _headerH = 24.0;
 
     // Title bar
     _titleBar = [[NSView alloc] init];
@@ -255,7 +255,7 @@ static NSImage *_PFLoadIcon(NSString *name) {
 
     _titleLabel = [NSTextField labelWithString:@""];
     _titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    _titleLabel.font = [NSFont systemFontOfSize:(glass ? 13.0 : 11.0)];
+    _titleLabel.font = [NSFont systemFontOfSize:11.0];
     _titleLabel.textColor = [NSColor labelColor];
     _titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
     [_titleBar addSubview:_titleLabel];
@@ -296,7 +296,7 @@ static NSImage *_PFLoadIcon(NSString *name) {
         [_titleBar.trailingAnchor  constraintEqualToAnchor:self.trailingAnchor],
         _titleBarHeight,
 
-        [_titleLabel.leadingAnchor  constraintEqualToAnchor:_titleBar.leadingAnchor constant:(glass ? 11.0 : 6.0)],
+        [_titleLabel.leadingAnchor  constraintEqualToAnchor:_titleBar.leadingAnchor constant:6.0],
         [_titleLabel.centerYAnchor  constraintEqualToAnchor:_titleBar.centerYAnchor],
         [_titleLabel.trailingAnchor constraintLessThanOrEqualToAnchor:_popButton.leadingAnchor constant:-4],
 
@@ -406,10 +406,15 @@ static NSImage *_PFLoadIcon(NSString *name) {
 
 - (void)_applyThemeColors {
     if ([NppThemeManager shared].usesGlassMaterials) {
-        // Tahoe: the glass _headerVFX provides the background, so keep the
+        // Tahoe: the glass _headerVFX provides the header background, so keep the
         // title-bar layer clear and let the material show through.
         _titleBar.layer.backgroundColor = NSColor.clearColor.CGColor;
         _headerVFX.material = [[NppThemeManager shared] materialForRole:NppMaterialRolePanelHeader];
+        // Opaque white body so each panel's content — including its transparent
+        // action/search row — reads as white, not the window gradient. The header
+        // VFX renders on top; the rounded side-panel host clips this.
+        self.wantsLayer = YES;
+        self.layer.backgroundColor = [NppThemeManager shared].panelBackground.CGColor;
     } else {
         _titleBar.layer.backgroundColor = [NppThemeManager shared].tabBarBackground.CGColor;
     }
