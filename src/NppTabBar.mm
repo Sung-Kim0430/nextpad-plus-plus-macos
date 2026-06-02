@@ -472,6 +472,11 @@ static const CGFloat kPinSize = 11.0; // pin icon drawn at ~80% of original ~14p
 - (void)buildScrollView { /* init already called _buildUI */ }
 
 - (void)drawRect:(NSRect)dirtyRect {
+    if (TM.usesGlassMaterials) {
+        // Tahoe: transparent tab strip with no bottom separator — the window
+        // gradient shows behind the tabs. Gated; Classic keeps its #eeeeee fill.
+        return;
+    }
     [tabBarBgColor() setFill];
     NSRectFill(self.bounds);
     [[NSColor separatorColor] setFill];

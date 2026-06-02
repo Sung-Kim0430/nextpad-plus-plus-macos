@@ -1871,6 +1871,23 @@ static NSArray<NSArray *> *tahoeToolbarGroups(void) {
 }
 @end
 
+// Tahoe-only (gated): round an editor "card" — bottom-left + bottom-right on the
+// container (its top edge is the transparent tab strip), and top-right on the
+// content view (the white editor begins below the tab bar). Top-left stays square
+// under the first tab. Mirrors the primary editor's rounding; used for the
+// secondary (vertical/horizontal split) editors so every pane matches.
+static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
+    if (![NppThemeManager shared].usesGlassMaterials) return;
+    container.wantsLayer = YES;
+    container.layer.cornerRadius  = 8.0;
+    container.layer.masksToBounds = YES;
+    container.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner; // bottom
+    content.wantsLayer = YES;
+    content.layer.cornerRadius  = 8.0;
+    content.layer.masksToBounds = YES;
+    content.layer.maskedCorners = kCALayerMaxXMaxYCorner;  // top-right
+}
+
 @interface MainWindowController ()
     <TabManagerDelegate, NSWindowDelegate,
      NSToolbarDelegate, FindReplacePanelDelegate, NSUserInterfaceValidations,
@@ -3395,6 +3412,16 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     [primaryTabBar setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
     NSView *primaryContentView = _tabManager.contentView;
     primaryContentView.translatesAutoresizingMaskIntoConstraints = NO;
+    // Tahoe: round the editor's TOP-RIGHT corner. The white editor area begins
+    // below the tab bar, so its top-right is here (not on primaryContainer, whose
+    // top edge is the transparent tab strip). Bottom corners are rounded by
+    // primaryContainer's clip above. Gated.
+    if ([NppThemeManager shared].usesGlassMaterials) {
+        primaryContentView.wantsLayer = YES;
+        primaryContentView.layer.cornerRadius  = 8.0;
+        primaryContentView.layer.masksToBounds = YES;
+        primaryContentView.layer.maskedCorners = kCALayerMaxXMaxYCorner;  // top-right only
+    }
 
     // Primary container wraps tab bar + editor content
     NSView *primaryContainer = [[NSView alloc] init];
@@ -3405,6 +3432,12 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         primaryContainer.wantsLayer = YES;
         primaryContainer.layer.cornerRadius  = 8.0;
         primaryContainer.layer.masksToBounds = YES;
+        // Round only the BOTTOM corners of the whole card (its top edge is the
+        // transparent tab strip — rounding there is invisible). The editor's
+        // top-right is rounded on primaryContentView below (the white area starts
+        // beneath the tab bar). (MinY = bottom in this layer.)
+        primaryContainer.layer.maskedCorners =
+            kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
     }
     [primaryContainer addSubview:primaryTabBar];
     [primaryContainer addSubview:primaryContentView];
@@ -3445,6 +3478,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         [subContentView.trailingAnchor constraintEqualToAnchor:_subEditorContainerH.trailingAnchor],
         [subContentView.bottomAnchor constraintEqualToAnchor:_subEditorContainerH.bottomAnchor],
     ]];
+    _nppTahoeRoundEditorCard(_subEditorContainerH, subContentView);  // Tahoe rounded card (gated)
 
     // ── Secondary TabManager V (vertical/right view, starts collapsed) ─────────
     _subTabManagerV = [[TabManager alloc] init];
@@ -3472,9 +3506,10 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         [subContentViewV.trailingAnchor constraintEqualToAnchor:_subEditorContainerV.trailingAnchor],
         [subContentViewV.bottomAnchor constraintEqualToAnchor:_subEditorContainerV.bottomAnchor],
     ]];
+    _nppTahoeRoundEditorCard(_subEditorContainerV, subContentViewV);  // Tahoe rounded card (gated)
 
     // ── Left/right split between primary and vertical secondary ───────────────
-    _vSplitView = [[NSSplitView alloc] init];
+    _vSplitView = [[NppGapSplitView alloc] init];   // Tahoe: 12pt transparent gap between editor panes (gated)
     _vSplitView.vertical = YES;   // left/right split
     _vSplitView.dividerStyle = NSSplitViewDividerStyleThin;
     _vSplitView.delegate = self;
@@ -3485,7 +3520,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     [_subEditorContainerV.widthAnchor constraintGreaterThanOrEqualToConstant:100].active = YES;
 
     // ── Top/bottom split between _vSplitView and horizontal secondary ─────────
-    _hSplitView = [[NSSplitView alloc] init];
+    _hSplitView = [[NppGapSplitView alloc] init];   // Tahoe: 12pt transparent gap between editor panes (gated)
     _hSplitView.vertical = NO;    // top/bottom split
     _hSplitView.dividerStyle = NSSplitViewDividerStyleThin;
     _hSplitView.delegate = self;
