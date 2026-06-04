@@ -1,6 +1,7 @@
 #import "NppTabBar.h"
 #import "NppThemeManager.h"
 #import "PreferencesWindowController.h"
+#import "NppLocalizer.h"   // match tab-menu items by normalized English title (locale-proof)
 
 @class _NppTabItem;
 
@@ -1122,17 +1123,17 @@ static const CGFloat kPinSize = 11.0; // pin icon drawn at ~80% of original ~14p
 
 /// Walk a menu recursively to find an item by title (case-insensitive, strips shortcuts).
 static NSMenuItem *_findMenuItemByTitle(NSMenu *menu, NSString *title) {
-    NSString *target = title.lowercaseString;
+    // Match against each item's ORIGINAL ENGLISH title (the localizer stashes it),
+    // normalized the same way the localizer normalizes — so this resolves the XML's
+    // English MenuItemName regardless of the active UI language AND irons out the
+    // "..." vs "…" / accelerator differences. (Old code compared the localized
+    // display title verbatim, which dropped every item in non-English languages
+    // and the ellipsis items even in English.)
+    NSString *target = [NppLocalizer normalizedTitleKey:title];
     for (NSMenuItem *mi in menu.itemArray) {
         if (mi.isSeparatorItem) continue;
-        // Strip keyboard shortcut suffix (everything after \t) and & accelerator markers
-        NSString *clean = mi.title;
-        NSRange tabR = [clean rangeOfString:@"\t"];
-        if (tabR.location != NSNotFound) clean = [clean substringToIndex:tabR.location];
-        clean = [clean stringByReplacingOccurrencesOfString:@"&" withString:@""];
-        clean = [clean stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-
-        if ([clean.lowercaseString isEqualToString:target]) return mi;
+        NSString *eng = [NppLocalizer englishTitleOfMenuItem:mi];
+        if ([[NppLocalizer normalizedTitleKey:eng] isEqualToString:target]) return mi;
 
         // Recurse into submenus
         if (mi.submenu) {
@@ -1188,11 +1189,20 @@ static NSMenu *_buildTabContextMenuFromXML(NSString *xmlPath) {
 
         if (!menuEntry.length || !menuItem.length) continue;
 
-        // Find the top-level menu matching MenuEntryName
+        // Find the top-level menu matching MenuEntryName by its ENGLISH title
+        // (locale-proof — the localized bar shows "Файл" etc., so a verbatim
+        // "File" compare failed in non-English languages and dropped every child).
         NSMenu *entryMenu = nil;
+        NSString *entryTarget = [NppLocalizer normalizedTitleKey:menuEntry];
         for (NSMenuItem *top in mainMenu.itemArray) {
-            NSString *title = top.submenu.title ?: top.title;
-            if ([title.lowercaseString isEqualToString:menuEntry.lowercaseString]) {
+            if (!top.submenu) continue;
+            // Top-level menu *items* have an empty title (the name "File"/"Edit"/…
+            // lives on the SUBMENU), so match the submenu's English title; fall
+            // back to the item's just in case.
+            NSString *engMenu = [NppLocalizer englishTitleOfMenu:top.submenu];
+            NSString *engItem = [NppLocalizer englishTitleOfMenuItem:top];
+            if ([[NppLocalizer normalizedTitleKey:engMenu] isEqualToString:entryTarget] ||
+                [[NppLocalizer normalizedTitleKey:engItem] isEqualToString:entryTarget]) {
                 entryMenu = top.submenu;
                 break;
             }

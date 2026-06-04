@@ -728,6 +728,22 @@ static const char kOriginalSubmenuTitleKey = 0;
     // If no stored title and no translation: leave the title as-is (already English).
 }
 
++ (NSString *)englishTitleOfMenuItem:(NSMenuItem *)item {
+    if (!item) return @"";
+    NSString *stored = objc_getAssociatedObject(item, &kOriginalTitleKey);
+    return stored ?: (item.title ?: @"");
+}
+
++ (NSString *)englishTitleOfMenu:(NSMenu *)menu {
+    if (!menu) return @"";
+    NSString *stored = objc_getAssociatedObject(menu, &kOriginalSubmenuTitleKey);
+    return stored ?: (menu.title ?: @"");
+}
+
++ (NSString *)normalizedTitleKey:(NSString *)title {
+    return title.length ? normalizeForLookup(title) : @"";
+}
+
 // ---------------------------------------------------------------------------
 #pragma mark - Private: file lookup helpers
 // ---------------------------------------------------------------------------
