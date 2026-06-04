@@ -414,13 +414,13 @@ private:
     std::string  _substituted;
 };
 
-// Factory called by Scintilla when SCI_OWNREGEX is defined.
+// Named factory for the default (per-line std::regex) backend. The single
+// SCI_OWNREGEX CreateRegexSearch() lives in RegexBackendSelect.cxx and dispatches
+// here unless the "Use Boost Regex mode" preference is on.
 namespace Scintilla::Internal {
-#ifdef SCI_OWNREGEX
-RegexSearchBase *CreateRegexSearch(CharClassify *charClassTable) {
+RegexSearchBase *CreateNppRegexSearch(CharClassify *charClassTable) {
     return new NppRegexSearch(charClassTable);
 }
-#endif
 } // namespace Scintilla::Internal
 
 // ────────────────────────────────────────────────────────────────────────

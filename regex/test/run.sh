@@ -20,10 +20,17 @@ core=(Document CellBuffer CharClassify CharacterCategoryMap CharacterType \
 srcs=()
 for s in "${core[@]}"; do srcs+=("$sci/src/$s.cxx"); done
 
+# Link the full regex source set: NppRegexSearch (the engine under test) plus the
+# selector (provides CreateRegexSearch) and the Boost backend it references. The
+# default gNppUseBoostRegex=false means CreateRegexSearch() returns NppRegexSearch,
+# so this harness validates the default (per-line std::regex) path unchanged.
 clang++ -std=c++17 -stdlib=libc++ \
-    -DSCI_NAMESPACE -DSCI_OWNREGEX -DSCINTILLA_QT=0 \
+    -DSCI_NAMESPACE -DSCI_OWNREGEX -DSCINTILLA_QT=0 -DBOOST_REGEX_STANDALONE \
     -I"$sci/include" -I"$sci/src" -I"$root/regex" \
-    "$here/test_npp_regex.cxx" "$root/regex/NppRegexSearch.cxx" "${srcs[@]}" \
+    "$here/test_npp_regex.cxx" \
+    "$root/regex/NppRegexSearch.cxx" "$root/regex/RegexBackendSelect.cxx" \
+    "$root/regex/BoostRegExSearch.cxx" "$root/regex/UTF8DocumentIterator.cxx" \
+    "${srcs[@]}" \
     -o "$out/test_npp_regex"
 
 "$out/test_npp_regex"

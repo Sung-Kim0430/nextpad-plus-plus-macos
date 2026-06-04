@@ -29,12 +29,21 @@ set(SCI_COCOA_SRCS
 )
 
 # regex/  is this repo's SCI_OWNREGEX implementation — see regex/NppRegexSearch.cxx.
-# Mirrors Notepad++ Windows's `boostregex/` sibling-directory pattern (but uses
-# std::regex from libc++ instead of Boost.Regex). With SCI_OWNREGEX defined,
-# Scintilla's built-in CreateRegexSearch() compiles out and the linker picks up
-# the one in this folder.
+# Mirrors Notepad++ Windows's `boostregex/` sibling-directory pattern. We compile
+# BOTH backends and a small selector picks one at runtime (RegexBackendSelect.cxx):
+#   * NppRegexSearch.cxx   — per-line std::regex (default, "Use Boost Regex" off)
+#   * BoostRegExSearch.cxx — whole-buffer Boost.Regex (opt-in, Windows parity:
+#                            multi-line, lookbehind, \K). Header-only Boost subset
+#                            vendored under regex/boost/ (BOOST_REGEX_STANDALONE).
+# With SCI_OWNREGEX defined, Scintilla's built-in CreateRegexSearch() compiles out
+# and the linker picks up the selector's one.
 set(NPP_REGEX_ROOT "${CMAKE_SOURCE_DIR}/regex")
-set(NPP_REGEX_SRCS "${NPP_REGEX_ROOT}/NppRegexSearch.cxx")
+set(NPP_REGEX_SRCS
+    "${NPP_REGEX_ROOT}/NppRegexSearch.cxx"
+    "${NPP_REGEX_ROOT}/BoostRegExSearch.cxx"
+    "${NPP_REGEX_ROOT}/UTF8DocumentIterator.cxx"
+    "${NPP_REGEX_ROOT}/RegexBackendSelect.cxx"
+)
 
 add_library(scintilla STATIC ${SCI_CORE_SRCS} ${SCI_COCOA_SRCS} ${NPP_REGEX_SRCS})
 
@@ -44,6 +53,8 @@ target_include_directories(scintilla PUBLIC
     "${SCI_ROOT}/cocoa"
 )
 target_include_directories(scintilla PRIVATE
+    # contains boost/ — boost headers self-include as <boost/...>, so the root
+    # (not boost/ itself) goes on the include path
     "${NPP_REGEX_ROOT}"
 )
 
@@ -51,6 +62,7 @@ target_compile_definitions(scintilla PRIVATE
     SCI_NAMESPACE
     SCI_OWNREGEX
     SCINTILLA_QT=0
+    BOOST_REGEX_STANDALONE
 )
 
 set_source_files_properties(${SCI_COCOA_SRCS} PROPERTIES
