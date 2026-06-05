@@ -7431,7 +7431,13 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     [self _setCurrentEditorEncoding:CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingBig5) hasBOM:NO];
 }
 - (void)setEncodingGB2312:(id)sender {
-    [self _setCurrentEditorEncoding:CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingGB_2312_80) hasBOM:NO];
+    // macOS recognises kCFStringEncodingGB_2312_80 as a constant but has NO working
+    // converter for it — dataUsingEncoding:/initWithData: return nil ("Unknown
+    // encoding"), so saving/reloading as GB2312 fails. Use GBK (Windows codepage
+    // 936), which is the de-facto "GB2312" superset, round-trips on macOS, and
+    // matches Notepad++ on Windows. See nppEncForMenu in EditorView for the
+    // reverse (status-bar) mapping.
+    [self _setCurrentEditorEncoding:CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingGBK_95) hasBOM:NO];
 }
 - (void)setEncodingShiftJIS:(id)sender {
     [self _setCurrentEditorEncoding:CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingShiftJIS) hasBOM:NO];

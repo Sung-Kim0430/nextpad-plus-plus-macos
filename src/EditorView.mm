@@ -210,6 +210,45 @@ static inline NSStringEncoding nppEnc(CFStringEncoding cf) {
     return CFStringConvertEncodingToNSStringEncoding(cf);
 }
 
+// Normalize an encoding returned by +[NSString stringEncodingForData:] to the
+// constant our Encoding menu uses, so the auto-detected status-bar label and the
+// menu's check state stay consistent (the reverse name-map already covers these
+// canonical constants — no extra map entries needed). The detector returns CJK
+// *variants* (GB18030, cp950/DOSChineseTrad, cp932/DOSJapanese, …) that aren't the
+// same NSStringEncoding values as the menu items. Returns 0 when there's no mapping
+// (caller then keeps the detected encoding as-is). Note: the decoded *content* is
+// always taken from the detector's own decode, so normalizing here never corrupts
+// what is loaded — it only affects the label and the encoding used for a re-save.
+static NSStringEncoding canonicalCJKEncoding(NSStringEncoding ns) {
+    switch (CFStringConvertNSStringEncodingToEncoding(ns)) {
+        // Simplified Chinese family → GBK (shown as "GB2312", matching Windows CP936)
+        case kCFStringEncodingGB_18030_2000:
+        case kCFStringEncodingGBK_95:
+        case kCFStringEncodingGB_2312_80:
+        case kCFStringEncodingEUC_CN:
+        case kCFStringEncodingHZ_GB_2312:
+            return nppEnc(kCFStringEncodingGBK_95);
+        // Traditional Chinese family → Big5
+        case kCFStringEncodingBig5:
+        case kCFStringEncodingBig5_HKSCS_1999:
+        case kCFStringEncodingBig5_E:
+        case kCFStringEncodingDOSChineseTrad:
+            return nppEnc(kCFStringEncodingBig5);
+        // Japanese family → Shift-JIS
+        case kCFStringEncodingShiftJIS:
+        case kCFStringEncodingShiftJIS_X0213:
+        case kCFStringEncodingDOSJapanese:
+            return nppEnc(kCFStringEncodingShiftJIS);
+        // Korean family → EUC-KR
+        case kCFStringEncodingEUC_KR:
+        case kCFStringEncodingDOSKorean:
+        case kCFStringEncodingKSC_5601_87:
+            return nppEnc(kCFStringEncodingEUC_KR);
+        default:
+            return 0;
+    }
+}
+
 // Files larger than the threshold get a warning + large-file mode (no syntax,
 // no undo, plus per-feature gates from Performance prefs). When the user has
 // disabled "Enable Large File Restriction" entirely, returns SIZE_MAX so no
@@ -493,18 +532,37 @@ static NSUInteger nppLargeFileThreshold(void) {
             enc = NSISOLatin1StringEncoding;
             utf8Data = rawData;
         } else {
-            // Small non-UTF-8: try Win-1252, then Latin-1 (cheap walk on small).
-            NSStringEncoding win1252 = nppEnc(kCFStringEncodingWindowsLatin1);
-            NSString *content = [[NSString alloc] initWithData:rawData encoding:win1252];
-            if (content) {
-                enc = win1252;
-                utf8Data = [content dataUsingEncoding:NSUTF8StringEncoding];
-            } else {
-                content = [[NSString alloc] initWithData:rawData
-                                                encoding:NSISOLatin1StringEncoding];
+            // Small non-UTF-8: first ask macOS's heuristic charset detector — it
+            // covers the CJK encodings the old Win-1252/Latin-1 fallback turned into
+            // mojibake (GBK/GB18030, Big5, Shift-JIS, EUC, …). We only trust a result
+            // that decoded *without* lossy substitution; anything else falls through
+            // to the unchanged Win-1252/Latin-1 path, so Western files never regress.
+            NSString *detected = nil;
+            BOOL detLossy = NO;
+            NSStringEncoding guess = [NSString stringEncodingForData:rawData
+                                                    encodingOptions:nil
+                                                    convertedString:&detected
+                                                usedLossyConversion:&detLossy];
+            if (detected && guess != 0 && !detLossy && guess != NSUTF8StringEncoding) {
+                NSStringEncoding canon = canonicalCJKEncoding(guess);
+                enc = canon ?: guess;
+                utf8Data = [detected dataUsingEncoding:NSUTF8StringEncoding];
+            }
+
+            if (!utf8Data) {
+                // Fallback: try Win-1252, then Latin-1 (cheap walk on small files).
+                NSStringEncoding win1252 = nppEnc(kCFStringEncodingWindowsLatin1);
+                NSString *content = [[NSString alloc] initWithData:rawData encoding:win1252];
                 if (content) {
-                    enc = NSISOLatin1StringEncoding;
+                    enc = win1252;
                     utf8Data = [content dataUsingEncoding:NSUTF8StringEncoding];
+                } else {
+                    content = [[NSString alloc] initWithData:rawData
+                                                    encoding:NSISOLatin1StringEncoding];
+                    if (content) {
+                        enc = NSISOLatin1StringEncoding;
+                        utf8Data = [content dataUsingEncoding:NSUTF8StringEncoding];
+                    }
                 }
             }
         }
@@ -1128,7 +1186,7 @@ static NSUInteger nppLargeFileThreshold(void) {
             @(nppEnc(kCFStringEncodingWindowsBalticRim)):                              @"Windows-1257",
             @(nppEnc(kCFStringEncodingWindowsLatin5)):                                 @"Windows-1254",
             @(nppEnc(kCFStringEncodingBig5)):                                          @"Big5",
-            @(nppEnc(kCFStringEncodingGB_2312_80)):                                    @"GB2312",
+            @(nppEnc(kCFStringEncodingGBK_95)):                                        @"GB2312",  // GBK (CP936); GB_2312_80 has no macOS converter
             @(nppEnc(kCFStringEncodingShiftJIS)):                                      @"Shift-JIS",
             @(nppEnc(kCFStringEncodingEUC_KR)):                                        @"EUC-KR",
         };
