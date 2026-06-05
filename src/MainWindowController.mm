@@ -1866,20 +1866,37 @@ static NSArray<NSArray *> *tahoeToolbarGroups(void) {
 }
 @end
 
-// Tahoe-only window backdrop: a diagonal gradient (#dce7fd top-left → #f5f3f6
-// bottom-right). Its backing layer IS the gradient, so it resizes automatically
-// with the window. Gated — only instantiated under Tahoe.
+// Tahoe-only window backdrop: a diagonal gradient that follows the appearance —
+//   light: #dce7fd (top-left) → #f5f3f6 (bottom-right)
+//   dark:  #25252d (top-left) → #2e2e2e (bottom-right)
+// Its backing layer IS the gradient, so it resizes automatically with the window.
+// Gated — only instantiated under Tahoe.
 @interface NppGradientView : NSView
 @end
 @implementation NppGradientView
+- (NSArray *)_gradientColors {
+    NSAppearanceName m = [self.effectiveAppearance
+        bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]];
+    if ([m isEqualToString:NSAppearanceNameDarkAqua])
+        return @[ (id)[NSColor colorWithSRGBRed:0x25/255.0 green:0x25/255.0 blue:0x2D/255.0 alpha:1.0].CGColor,
+                  (id)[NSColor colorWithSRGBRed:0x2E/255.0 green:0x2E/255.0 blue:0x2E/255.0 alpha:1.0].CGColor ];
+    return @[ (id)[NSColor colorWithSRGBRed:0xDC/255.0 green:0xE7/255.0 blue:0xFD/255.0 alpha:1.0].CGColor,
+              (id)[NSColor colorWithSRGBRed:0xF5/255.0 green:0xF3/255.0 blue:0xF6/255.0 alpha:1.0].CGColor ];
+}
 - (CALayer *)makeBackingLayer {
     CAGradientLayer *g = [CAGradientLayer layer];
-    g.colors = @[ (id)[NSColor colorWithSRGBRed:0xDC/255.0 green:0xE7/255.0 blue:0xFD/255.0 alpha:1.0].CGColor,
-                  (id)[NSColor colorWithSRGBRed:0xF5/255.0 green:0xF3/255.0 blue:0xF6/255.0 alpha:1.0].CGColor ];
+    g.colors     = [self _gradientColors];
     g.startPoint = CGPointMake(0.0, 1.0);   // top-left
     g.endPoint   = CGPointMake(1.0, 0.0);   // bottom-right
     return g;
 }
+- (void)_applyGradientColors {
+    if ([self.layer isKindOfClass:[CAGradientLayer class]])
+        ((CAGradientLayer *)self.layer).colors = [self _gradientColors];
+}
+// CGColors aren't dynamic, so re-resolve on a light/dark flip and when first shown.
+- (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; [self _applyGradientColors]; }
+- (void)viewDidMoveToWindow             { [super viewDidMoveToWindow];             [self _applyGradientColors]; }
 @end
 
 // Tahoe-only (gated): round an editor "card" — bottom-left + bottom-right on the
