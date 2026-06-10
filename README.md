@@ -38,13 +38,28 @@ The goal is not just to make Notepad++ "run" on Mac — it's to make it feel lik
 ## Screenshots
 
 <p align="center">
-  <img src="https://nextpad.org/assets/images/screenshot1.png" alt="Nextpad++ for macOS in light mode with syntax-highlighted code, tabs, and document map" width="800">
-  <br><em>Light mode with syntax highlighting and document map</em>
+  <img src="https://nextpad.org/assets/images/screenshot7.png" alt="Nextpad++ for macOS in Dark mode Classic Look" width="900">
+  <br><em>Nextpad++ for macOS in Dark mode Classic Look</em>
 </p>
 
 <p align="center">
-  <img src="https://nextpad.org/assets/images/screenshot3.png" alt="Nextpad++ for macOS in dark mode with native macOS title bar" width="800">
-  <br><em>Dark mode, native macOS title bar</em>
+  <img src="https://nextpad.org/assets/images/screenshot1.png" alt="Nextpad++ for macOS in Light mode, Classic Look" width="900">
+  <br><em>Nextpad++ for macOS in Light mode, Classic Look</em>
+</p>
+
+<p align="center">
+  <img src="https://nextpad.org/assets/images/screenshot1.png" alt="Nextpad++ for macOS in Light mode, Classic Look" width="900">
+  <br><em>Nextpad++ for macOS in Light mode, Classic Look</em>
+</p>
+
+<p align="center">
+  <img src="https://nextpad.org/assets/images/plugins_admin_screen.png" alt="Nextpad++ for macOS in Light mode, Classic Look and Plugin Admin" width="900">
+  <br><em>Nextpad++ for macOS in Light mode and Classic Look</em>
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nextpad-plus-plus/nextpad.org/main/assets/images/github_screen1.png" alt="Notepad++ for macOS" width="1000">
+  <br><em>Nextpad++ for macOS in Dark mode and Tahoe Look</em>
 </p>
 
 ## Installation
