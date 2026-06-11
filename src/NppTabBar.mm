@@ -407,15 +407,24 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
 @interface NppTabBar (_NppTabBarPrivate)
 - (void)_emptyAreaDoubleClicked;
 - (NSArray<NSArray<_NppTabItem *> *> *)_wrapRowsForTabs:(NSArray<_NppTabItem *> *)tabs
+                                                widths:(NSArray<NSNumber *> *)widths
                                               barWidth:(CGFloat)barW;
+- (NSArray<NSNumber *> *)_baseLayoutWidthsForWrapTabs:(NSArray<_NppTabItem *> *)tabs
+                                             barWidth:(CGFloat)barW;
+- (NSArray<NSArray<_NppTabItem *> *> *)_resolvedWrapRowsForTabs:(NSArray<_NppTabItem *> *)tabs
+                                                    layoutWidths:(NSArray<NSNumber *> *)layoutWidths
+                                                        barWidth:(CGFloat)barW;
+- (NSArray<NSArray<_NppTabItem *> *> *)_finalWrapRowsForTabs:(NSArray<_NppTabItem *> *)tabs
+                                                    barWidth:(CGFloat)barW
+                                               layoutWidths:(NSArray<NSNumber *> * _Nullable)layoutWidths;
 - (NSArray<NSNumber *> *)_autoSizedWidthsForRowTabs:(NSArray<_NppTabItem *> *)rowTabs
-                                           barWidth:(CGFloat)barW;
+                                        baseWidths:(NSArray<NSNumber *> *)baseWidths
+                                          barWidth:(CGFloat)barW;
 - (void)_layoutWrapTabs:(NSArray<_NppTabItem *> *)tabs
                barWidth:(CGFloat)barW
                neededH:(CGFloat)neededH
                activeH:(CGFloat)activeH
-            inactiveH:(CGFloat)inactiveH
-               autoFill:(BOOL)autoFill;
+            inactiveH:(CGFloat)inactiveH;
 @end
 
 @interface _NppTabBarContainer : NSView
@@ -919,14 +928,20 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
 
 #pragma mark - Layout
 
+static BOOL wrapRowsHaveOrphanLast(NSArray<NSArray *> *rows) {
+    return rows.count >= 2 && rows.lastObject.count == 1;
+}
+
 - (NSArray<NSArray<_NppTabItem *> *> *)_wrapRowsForTabs:(NSArray<_NppTabItem *> *)tabs
+                                                widths:(NSArray<NSNumber *> *)widths
                                               barWidth:(CGFloat)barW {
     NSMutableArray<NSMutableArray<_NppTabItem *> *> *rows = [NSMutableArray array];
     NSMutableArray<_NppTabItem *> *current = [NSMutableArray array];
     CGFloat x = 0;
 
-    for (_NppTabItem *item in tabs) {
-        CGFloat w = item.preferredWidth;
+    for (NSInteger i = 0; i < (NSInteger)tabs.count; i++) {
+        _NppTabItem *item = tabs[i];
+        CGFloat w = (i < (NSInteger)widths.count) ? widths[i].doubleValue : item.preferredWidth;
         if (x + w > barW && x > 0) {
             [rows addObject:current];
             current = [NSMutableArray array];
@@ -939,8 +954,175 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
     return rows;
 }
 
+- (NSArray<NSNumber *> *)_preferredWidthsForTabs:(NSArray<_NppTabItem *> *)tabs {
+    NSMutableArray<NSNumber *> *widths = [NSMutableArray arrayWithCapacity:tabs.count];
+    for (_NppTabItem *tab in tabs)
+        [widths addObject:@(tab.preferredWidth)];
+    return widths;
+}
+
+- (NSArray<NSNumber *> *)_widthsByUniformShrink:(NSArray<_NppTabItem *> *)tabs
+                                      preferred:(NSArray<NSNumber *> *)preferred
+                                          delta:(CGFloat)delta {
+    NSInteger n = (NSInteger)tabs.count;
+    NSMutableArray<NSNumber *> *widths = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
+    for (NSInteger i = 0; i < n; i++) {
+        CGFloat floor = tabShrinkFloor(tabs[i]);
+        CGFloat w     = MAX(floor, preferred[i].doubleValue - delta);
+        [widths addObject:@(w)];
+    }
+    return widths;
+}
+
+/// When a new tab would sit alone on the last row, uniformly shrink every tab
+/// (down to per-tab floors) just enough to pull at least one neighbour down
+/// with it — or to collapse back to a single row — so the layout looks balanced.
+- (NSArray<NSNumber *> *)_baseLayoutWidthsForWrapTabs:(NSArray<_NppTabItem *> *)tabs
+                                             barWidth:(CGFloat)barW {
+    NSInteger n = (NSInteger)tabs.count;
+    if (n == 0) return @[];
+
+    NSArray<NSNumber *> *preferred = [self _preferredWidthsForTabs:tabs];
+    if (n == 1) return preferred;
+
+    NSArray<NSArray<_NppTabItem *> *> *rows =
+        [self _wrapRowsForTabs:tabs widths:preferred barWidth:barW];
+    if (!wrapRowsHaveOrphanLast(rows)) return preferred;
+
+    CGFloat maxDelta = 0;
+    for (NSInteger i = 0; i < n; i++) {
+        CGFloat floor = tabShrinkFloor(tabs[i]);
+        maxDelta = MAX(maxDelta, preferred[i].doubleValue - floor);
+    }
+    if (maxDelta < 0.01) return preferred;
+
+    CGFloat lo = 0, hi = maxDelta;
+    for (NSInteger iter = 0; iter < 24; iter++) {
+        CGFloat mid = (lo + hi) * 0.5;
+        NSArray<NSNumber *> *trial =
+            [self _widthsByUniformShrink:tabs preferred:preferred delta:mid];
+        rows = [self _wrapRowsForTabs:tabs widths:trial barWidth:barW];
+        if (wrapRowsHaveOrphanLast(rows))
+            lo = mid;
+        else
+            hi = mid;
+    }
+
+    return [self _widthsByUniformShrink:tabs preferred:preferred delta:hi];
+}
+
+/// Evenly split `tabs` across `rowCount` rows (earlier rows receive extras).
+/// e.g. 5 tabs / 2 rows → 3 + 2, never 4 + 1.
+- (NSArray<NSArray<_NppTabItem *> *> *)_wrapRowsBalancedForTabs:(NSArray<_NppTabItem *> *)tabs
+                                                      rowCount:(NSInteger)rowCount {
+    NSInteger n = (NSInteger)tabs.count;
+    if (n == 0) return @[];
+    rowCount = MAX(1, MIN(rowCount, n));
+
+    if (rowCount == 1)
+        return @[tabs];
+
+    NSMutableArray<NSMutableArray<_NppTabItem *> *> *rows = [NSMutableArray array];
+    NSInteger base = n / rowCount;
+    NSInteger rem  = n % rowCount;
+    NSInteger idx  = 0;
+    for (NSInteger r = 0; r < rowCount; r++) {
+        NSInteger count = base + (r < rem ? 1 : 0);
+        NSMutableArray<_NppTabItem *> *row = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
+        for (NSInteger j = 0; j < count && idx < n; j++)
+            [row addObject:tabs[idx++]];
+        [rows addObject:row];
+    }
+    return rows;
+}
+
+static CGFloat sumTabShrinkFloors(NSArray<_NppTabItem *> *tabs) {
+    CGFloat sum = 0;
+    for (_NppTabItem *tab in tabs)
+        sum += tabShrinkFloor(tab);
+    return sum;
+}
+
+/// Greedy wrap to learn the minimum row count; when multi-row, assign tabs in
+/// balanced counts (12+11 not 20+3) so auto-filled tab widths stay similar.
+- (NSArray<NSArray<_NppTabItem *> *> *)_resolvedWrapRowsForTabs:(NSArray<_NppTabItem *> *)tabs
+                                                    layoutWidths:(NSArray<NSNumber *> *)layoutWidths
+                                                        barWidth:(CGFloat)barW {
+    NSArray<NSArray<_NppTabItem *> *> *greedyRows =
+        [self _wrapRowsForTabs:tabs widths:layoutWidths barWidth:barW];
+    NSInteger minRows = (NSInteger)greedyRows.count;
+    if (minRows <= 1) return greedyRows;
+
+    NSInteger n = (NSInteger)tabs.count;
+    for (NSInteger rowCount = minRows; rowCount <= n; rowCount++) {
+        NSArray<NSArray<_NppTabItem *> *> *rows =
+            [self _wrapRowsBalancedForTabs:tabs rowCount:rowCount];
+
+        BOOL allFit = YES;
+        for (NSArray<_NppTabItem *> *row in rows) {
+            if (sumTabShrinkFloors(row) > barW + 0.5) {
+                allFit = NO;
+                break;
+            }
+        }
+        if (allFit && !wrapRowsHaveOrphanLast(rows))
+            return rows;
+    }
+
+    return greedyRows;
+}
+
+/// Peel tabs off the end of an over-wide row until the remainder fits at shrink floors.
+- (NSArray<NSArray<_NppTabItem *> *> *)_splitRowAtShrinkFloors:(NSArray<_NppTabItem *> *)rowTabs
+                                                      barWidth:(CGFloat)barW {
+    if (rowTabs.count == 0) return @[];
+
+    NSMutableArray<_NppTabItem *> *row = [rowTabs mutableCopy];
+    NSMutableArray<_NppTabItem *> *peeled = [NSMutableArray array];
+
+    while (row.count > 1 && sumTabShrinkFloors(row) > barW + 0.5) {
+        [peeled insertObject:row.lastObject atIndex:0];
+        [row removeLastObject];
+    }
+
+    NSMutableArray<NSArray<_NppTabItem *> *> *result = [NSMutableArray array];
+    if (row.count > 0) [result addObject:row];
+
+    if (peeled.count > 0) {
+        for (NSArray<_NppTabItem *> *extra in [self _splitRowAtShrinkFloors:peeled barWidth:barW])
+            [result addObject:extra];
+    }
+    return result;
+}
+
+- (NSArray<NSArray<_NppTabItem *> *> *)_splitRowsExceedingBarWidth:(NSArray<NSArray<_NppTabItem *> *> *)rows
+                                                          barWidth:(CGFloat)barW {
+    NSMutableArray<NSArray<_NppTabItem *> *> *result = [NSMutableArray array];
+    for (NSArray<_NppTabItem *> *row in rows)
+        [result addObjectsFromArray:[self _splitRowAtShrinkFloors:row barWidth:barW]];
+    return result;
+}
+
+/// Full row pipeline: shrink → balanced assignment → floor-aware split → orphan fix.
+- (NSArray<NSArray<_NppTabItem *> *> *)_finalWrapRowsForTabs:(NSArray<_NppTabItem *> *)tabs
+                                                    barWidth:(CGFloat)barW
+                                               layoutWidths:(NSArray<NSNumber *> * _Nullable)layoutWidths {
+    if (!layoutWidths)
+        layoutWidths = [self _baseLayoutWidthsForWrapTabs:tabs barWidth:barW];
+    NSArray<NSArray<_NppTabItem *> *> *rows =
+        [self _resolvedWrapRowsForTabs:tabs layoutWidths:layoutWidths barWidth:barW];
+    rows = [self _splitRowsExceedingBarWidth:rows barWidth:barW];
+
+    if (wrapRowsHaveOrphanLast(rows)) {
+        rows = [self _wrapRowsBalancedForTabs:tabs rowCount:(NSInteger)rows.count];
+        rows = [self _splitRowsExceedingBarWidth:rows barWidth:barW];
+    }
+    return rows;
+}
+
 - (NSArray<NSNumber *> *)_autoSizedWidthsForRowTabs:(NSArray<_NppTabItem *> *)rowTabs
-                                           barWidth:(CGFloat)barW {
+                                        baseWidths:(NSArray<NSNumber *> *)baseWidths
+                                          barWidth:(CGFloat)barW {
     NSInteger n = (NSInteger)rowTabs.count;
     if (n == 0) return @[];
 
@@ -948,12 +1130,13 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
     NSMutableArray<NSNumber *> *floors = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
     CGFloat sumPref = 0;
 
-    for (_NppTabItem *tab in rowTabs) {
-        CGFloat p = tab.preferredWidth;
+    for (NSInteger i = 0; i < n; i++) {
+        _NppTabItem *tab = rowTabs[i];
+        CGFloat p = (i < (NSInteger)baseWidths.count) ? baseWidths[i].doubleValue : tab.preferredWidth;
         CGFloat f = tabShrinkFloor(tab);
-        [widths addObject:@(p)];
+        [widths addObject:@(MAX(p, f))];
         [floors addObject:@(f)];
-        sumPref += p;
+        sumPref += MAX(p, f);
     }
 
     if (fabs(sumPref - barW) < 0.5) return widths;
@@ -966,7 +1149,7 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
         for (NSInteger i = 0; i < n; i++) {
             CGFloat w = widths[i].doubleValue + (CGFloat)basePx + (i < remPx ? 1.0 : 0.0);
             if (i == n - 1)
-                w = barW - placed;
+                w = MAX(floors[n - 1].doubleValue, barW - placed);
             else
                 placed += w;
             widths[i] = @(w);
@@ -996,14 +1179,6 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
         }
     }
 
-    CGFloat total = 0;
-    for (NSInteger i = 0; i < n; i++) {
-        w[i] = @(MAX(floors[i].doubleValue, w[i].doubleValue));
-        total += w[i].doubleValue;
-    }
-    if (n > 0 && fabs(total - barW) > 0.01)
-        w[n - 1] = @(MAX(floors[n - 1].doubleValue, w[n - 1].doubleValue + (barW - total)));
-
     return w;
 }
 
@@ -1011,15 +1186,25 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
                barWidth:(CGFloat)barW
                neededH:(CGFloat)neededH
                activeH:(CGFloat)activeH
-            inactiveH:(CGFloat)inactiveH
-               autoFill:(BOOL)autoFill {
-    NSArray<NSArray<_NppTabItem *> *> *rows = [self _wrapRowsForTabs:tabs barWidth:barW];
+            inactiveH:(CGFloat)inactiveH {
+    NSArray<NSNumber *> *layoutWidths = [self _baseLayoutWidthsForWrapTabs:tabs barWidth:barW];
+    NSArray<NSArray<_NppTabItem *> *> *rows =
+        [self _finalWrapRowsForTabs:tabs barWidth:barW layoutWidths:layoutWidths];
+    BOOL autoFill = rows.count >= 2;
     CGFloat rowStep = activeH + 1;
 
     if (autoFill) {
         NSInteger row = 0;
         for (NSArray<_NppTabItem *> *rowTabs in rows) {
-            NSArray<NSNumber *> *widths = [self _autoSizedWidthsForRowTabs:rowTabs barWidth:barW];
+            NSMutableArray<NSNumber *> *rowBase = [NSMutableArray arrayWithCapacity:rowTabs.count];
+            for (_NppTabItem *item in rowTabs) {
+                NSUInteger idx = [tabs indexOfObjectIdenticalTo:item];
+                CGFloat w = (idx != NSNotFound && idx < layoutWidths.count)
+                    ? layoutWidths[idx].doubleValue : item.preferredWidth;
+                [rowBase addObject:@(w)];
+            }
+            NSArray<NSNumber *> *widths =
+                [self _autoSizedWidthsForRowTabs:rowTabs baseWidths:rowBase barWidth:barW];
             CGFloat x = 0;
             for (NSInteger i = 0; i < (NSInteger)rowTabs.count; i++) {
                 _NppTabItem *item = rowTabs[i];
@@ -1036,8 +1221,9 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
 
     CGFloat x = 0;
     NSInteger row = 0;
-    for (_NppTabItem *item in tabs) {
-        CGFloat w = item.preferredWidth;
+    for (NSInteger i = 0; i < (NSInteger)tabs.count; i++) {
+        _NppTabItem *item = tabs[i];
+        CGFloat w = layoutWidths[i].doubleValue;
         if (x + w > barW && x > 0) { x = 0; row++; }
         BOOL sel = (item.tabIndex == _selectedIndex);
         CGFloat y = neededH - (kTabTopGap - kActiveBoost) - activeH - ((CGFloat)row * rowStep);
@@ -1052,7 +1238,7 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
     CGFloat inactiveH = kTabBarBaseHeight - kTabTopGap - 1;
     CGFloat activeH   = inactiveH + kActiveBoost;
     CGFloat rowStep   = activeH + 1;
-    NSInteger rows = (NSInteger)[self _wrapRowsForTabs:_items barWidth:barW].count;
+    NSInteger rows = (NSInteger)[self _finalWrapRowsForTabs:_items barWidth:barW layoutWidths:nil].count;
     if (rows < 1) rows = 1;
 
     return 1 + ((CGFloat)rows - 1) * rowStep + activeH + (kTabTopGap - kActiveBoost);
@@ -1175,9 +1361,8 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
         _scrollView.frame = NSMakeRect(0, 0, barW, barH);
         [_scrollView.contentView scrollToPoint:NSZeroPoint];
 
-        BOOL autoFill = [self _wrapRowsForTabs:_items barWidth:barW].count >= 2;
         [self _layoutWrapTabs:_items barWidth:barW neededH:neededH
-                       activeH:activeH inactiveH:inactiveH autoFill:autoFill];
+                       activeH:activeH inactiveH:inactiveH];
         _containerView.frame = NSMakeRect(0, 0, barW, neededH);
         [self setNeedsDisplay:YES];
         return;
