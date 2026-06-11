@@ -155,6 +155,36 @@ static NSImage *toolbarIcon(NSString *name) {
 
 static const CGFloat kPinSize = 11.0; // pin icon drawn at ~80% of original ~14px
 
+// ── Tab width helpers (wrap-mode auto-fill) ───────────────────────────────────
+static CGFloat effectiveTabMaxWidth(void) {
+    NSInteger maxW = [[NSUserDefaults standardUserDefaults] integerForKey:kPrefTabMaxLabelWidth];
+    if (maxW < (NSInteger)kTabMinWidth) maxW = (NSInteger)kTabMinWidth;
+    return (CGFloat)maxW;
+}
+
+static CGFloat tabChromeWidth(_NppTabItem *item) {
+    CGFloat closeGap = 4 + kCloseSize + 4;
+    CGFloat pinGap   = item.isPinned ? (kPinSize + 2) : 0;
+    BOOL showClose = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefTabCloseButton];
+    if (!showClose) closeGap = 0;
+    return 8 + kIconSize + 4 + pinGap + closeGap + 8;
+}
+
+static CGFloat tabContentWidth(_NppTabItem *item) {
+    NSDictionary *attrs = @{NSFontAttributeName: [NSFont systemFontOfSize:11 weight:NSFontWeightRegular]};
+    CGFloat tw = [item.title sizeWithAttributes:attrs].width;
+    return tabChromeWidth(item) + tw;
+}
+
+/// Minimum width during wrap-mode auto-shrink: honour full short titles; long
+/// titles may truncate (middle ellipsis) but never shrink below max-tab pref.
+static CGFloat tabShrinkFloor(_NppTabItem *item) {
+    CGFloat maxW    = effectiveTabMaxWidth();
+    CGFloat content = tabContentWidth(item);
+    if (content > maxW) return maxW;
+    return MAX(kTabMinWidth, content);
+}
+
 - (CGFloat)preferredWidth {
     NSDictionary *attrs = @{NSFontAttributeName: [NSFont systemFontOfSize:11 weight:NSFontWeightRegular]};
     CGFloat tw       = [_title sizeWithAttributes:attrs].width;
@@ -376,6 +406,16 @@ static const CGFloat kPinSize = 11.0; // pin icon drawn at ~80% of original ~14p
 // without falling back to performSelector.
 @interface NppTabBar (_NppTabBarPrivate)
 - (void)_emptyAreaDoubleClicked;
+- (NSArray<NSArray<_NppTabItem *> *> *)_wrapRowsForTabs:(NSArray<_NppTabItem *> *)tabs
+                                              barWidth:(CGFloat)barW;
+- (NSArray<NSNumber *> *)_autoSizedWidthsForRowTabs:(NSArray<_NppTabItem *> *)rowTabs
+                                           barWidth:(CGFloat)barW;
+- (void)_layoutWrapTabs:(NSArray<_NppTabItem *> *)tabs
+               barWidth:(CGFloat)barW
+               neededH:(CGFloat)neededH
+               activeH:(CGFloat)activeH
+            inactiveH:(CGFloat)inactiveH
+               autoFill:(BOOL)autoFill;
 @end
 
 @interface _NppTabBarContainer : NSView
@@ -879,23 +919,141 @@ static const CGFloat kPinSize = 11.0; // pin icon drawn at ~80% of original ~14p
 
 #pragma mark - Layout
 
+- (NSArray<NSArray<_NppTabItem *> *> *)_wrapRowsForTabs:(NSArray<_NppTabItem *> *)tabs
+                                              barWidth:(CGFloat)barW {
+    NSMutableArray<NSMutableArray<_NppTabItem *> *> *rows = [NSMutableArray array];
+    NSMutableArray<_NppTabItem *> *current = [NSMutableArray array];
+    CGFloat x = 0;
+
+    for (_NppTabItem *item in tabs) {
+        CGFloat w = item.preferredWidth;
+        if (x + w > barW && x > 0) {
+            [rows addObject:current];
+            current = [NSMutableArray array];
+            x = 0;
+        }
+        [current addObject:item];
+        x += w;
+    }
+    if (current.count > 0) [rows addObject:current];
+    return rows;
+}
+
+- (NSArray<NSNumber *> *)_autoSizedWidthsForRowTabs:(NSArray<_NppTabItem *> *)rowTabs
+                                           barWidth:(CGFloat)barW {
+    NSInteger n = (NSInteger)rowTabs.count;
+    if (n == 0) return @[];
+
+    NSMutableArray<NSNumber *> *widths = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
+    NSMutableArray<NSNumber *> *floors = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
+    CGFloat sumPref = 0;
+
+    for (_NppTabItem *tab in rowTabs) {
+        CGFloat p = tab.preferredWidth;
+        CGFloat f = tabShrinkFloor(tab);
+        [widths addObject:@(p)];
+        [floors addObject:@(f)];
+        sumPref += p;
+    }
+
+    if (fabs(sumPref - barW) < 0.5) return widths;
+
+    if (sumPref < barW) {
+        NSInteger extraPx = (NSInteger)lround(barW - sumPref);
+        NSInteger basePx  = extraPx / n;
+        NSInteger remPx   = extraPx % n;
+        CGFloat   placed  = 0;
+        for (NSInteger i = 0; i < n; i++) {
+            CGFloat w = widths[i].doubleValue + (CGFloat)basePx + (i < remPx ? 1.0 : 0.0);
+            if (i == n - 1)
+                w = barW - placed;
+            else
+                placed += w;
+            widths[i] = @(w);
+        }
+        return widths;
+    }
+
+    // Shrink proportionally down to per-tab floors (short titles stay intact;
+    // long titles stop at max-tab pref where middle-ellipsis truncation applies).
+    NSMutableArray<NSNumber *> *w = [widths mutableCopy];
+    for (NSInteger iter = 0; iter < 32; iter++) {
+        CGFloat total = 0;
+        for (NSNumber *num in w) total += num.doubleValue;
+        if (total <= barW + 0.5) break;
+
+        CGFloat excess = total - barW;
+        CGFloat totalShrinkable = 0;
+        for (NSInteger i = 0; i < n; i++)
+            totalShrinkable += MAX(0, w[i].doubleValue - floors[i].doubleValue);
+        if (totalShrinkable < 0.01) break;
+
+        for (NSInteger i = 0; i < n; i++) {
+            CGFloat shrinkable = MAX(0, w[i].doubleValue - floors[i].doubleValue);
+            if (shrinkable <= 0) continue;
+            CGFloat delta = excess * (shrinkable / totalShrinkable);
+            w[i] = @(MAX(floors[i].doubleValue, w[i].doubleValue - delta));
+        }
+    }
+
+    CGFloat total = 0;
+    for (NSInteger i = 0; i < n; i++) {
+        w[i] = @(MAX(floors[i].doubleValue, w[i].doubleValue));
+        total += w[i].doubleValue;
+    }
+    if (n > 0 && fabs(total - barW) > 0.01)
+        w[n - 1] = @(MAX(floors[n - 1].doubleValue, w[n - 1].doubleValue + (barW - total)));
+
+    return w;
+}
+
+- (void)_layoutWrapTabs:(NSArray<_NppTabItem *> *)tabs
+               barWidth:(CGFloat)barW
+               neededH:(CGFloat)neededH
+               activeH:(CGFloat)activeH
+            inactiveH:(CGFloat)inactiveH
+               autoFill:(BOOL)autoFill {
+    NSArray<NSArray<_NppTabItem *> *> *rows = [self _wrapRowsForTabs:tabs barWidth:barW];
+    CGFloat rowStep = activeH + 1;
+
+    if (autoFill) {
+        NSInteger row = 0;
+        for (NSArray<_NppTabItem *> *rowTabs in rows) {
+            NSArray<NSNumber *> *widths = [self _autoSizedWidthsForRowTabs:rowTabs barWidth:barW];
+            CGFloat x = 0;
+            for (NSInteger i = 0; i < (NSInteger)rowTabs.count; i++) {
+                _NppTabItem *item = rowTabs[i];
+                CGFloat w = widths[i].doubleValue;
+                BOOL sel = (item.tabIndex == _selectedIndex);
+                CGFloat y = neededH - (kTabTopGap - kActiveBoost) - activeH - ((CGFloat)row * rowStep);
+                item.frame = NSMakeRect(x, y, w, sel ? activeH : inactiveH);
+                x += w;
+            }
+            row++;
+        }
+        return;
+    }
+
+    CGFloat x = 0;
+    NSInteger row = 0;
+    for (_NppTabItem *item in tabs) {
+        CGFloat w = item.preferredWidth;
+        if (x + w > barW && x > 0) { x = 0; row++; }
+        BOOL sel = (item.tabIndex == _selectedIndex);
+        CGFloat y = neededH - (kTabTopGap - kActiveBoost) - activeH - ((CGFloat)row * rowStep);
+        item.frame = NSMakeRect(x, y, w, sel ? activeH : inactiveH);
+        x += w;
+    }
+}
+
 - (CGFloat)_preferredHeightForWidth:(CGFloat)barW {
     if (!_wrapMode || _items.count == 0) return kTabBarBaseHeight;
 
     CGFloat inactiveH = kTabBarBaseHeight - kTabTopGap - 1;
     CGFloat activeH   = inactiveH + kActiveBoost;
     CGFloat rowStep   = activeH + 1;
-    CGFloat x = 0;
-    NSInteger rows = 1;
-
-    for (_NppTabItem *item in _items) {
-        CGFloat w = item.preferredWidth;
-        if (x + w > barW && x > 0) {
-            x = 0;
-            rows++;
-        }
-        x += w;
-    }
+    NSInteger rows = (NSInteger)[self _wrapRowsForTabs:_items barWidth:barW].count;
+    if (rows < 1) rows = 1;
 
     return 1 + ((CGFloat)rows - 1) * rowStep + activeH + (kTabTopGap - kActiveBoost);
 }
@@ -1017,17 +1175,9 @@ static const CGFloat kPinSize = 11.0; // pin icon drawn at ~80% of original ~14p
         _scrollView.frame = NSMakeRect(0, 0, barW, barH);
         [_scrollView.contentView scrollToPoint:NSZeroPoint];
 
-        CGFloat x = 0;
-        CGFloat rowStep = activeH + 1;
-        NSInteger row = 0;
-        for (_NppTabItem *item in _items) {
-            CGFloat w = item.preferredWidth;
-            if (x + w > barW && x > 0) { x = 0; row++; }
-            BOOL sel = (item.tabIndex == _selectedIndex);
-            CGFloat y = neededH - (kTabTopGap - kActiveBoost) - activeH - ((CGFloat)row * rowStep);
-            item.frame = NSMakeRect(x, y, w, sel ? activeH : inactiveH);
-            x += w;
-        }
+        BOOL autoFill = [self _wrapRowsForTabs:_items barWidth:barW].count >= 2;
+        [self _layoutWrapTabs:_items barWidth:barW neededH:neededH
+                       activeH:activeH inactiveH:inactiveH autoFill:autoFill];
         _containerView.frame = NSMakeRect(0, 0, barW, neededH);
         [self setNeedsDisplay:YES];
         return;
