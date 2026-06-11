@@ -424,7 +424,21 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
                barWidth:(CGFloat)barW
                neededH:(CGFloat)neededH
                activeH:(CGFloat)activeH
-            inactiveH:(CGFloat)inactiveH;
+            inactiveH:(CGFloat)inactiveH
+               skipItem:(_NppTabItem * _Nullable)skipItem
+                gapRect:(NSRect * _Nullable)gapRectOut
+            applyFrames:(BOOL)applyFrames;
+- (void)_layoutScrollTabs:(NSArray<_NppTabItem *> *)tabs
+                 barWidth:(CGFloat)barW
+                     barH:(CGFloat)barH
+                  activeH:(CGFloat)activeH
+               inactiveH:(CGFloat)inactiveH
+                 skipItem:(_NppTabItem * _Nullable)skipItem
+                  gapRect:(NSRect * _Nullable)gapRectOut
+              applyFrames:(BOOL)applyFrames;
+- (NSArray<_NppTabItem *> *)_previewTabsMovingFrom:(NSInteger)from to:(NSInteger)to;
+- (CGFloat)_preferredHeightForTabs:(NSArray<_NppTabItem *> *)tabs barWidth:(CGFloat)barW;
+- (NSRect)_gapRectPreviewMoveFrom:(NSInteger)from to:(NSInteger)to;
 @end
 
 @interface _NppTabBarContainer : NSView
@@ -667,82 +681,57 @@ static CGFloat tabShrinkFloor(_NppTabItem *item) {
     if (n <= 1) return 0;
     if (from < 0 || from >= n) return 0;
 
-    if (_wrapMode) {
-        CGFloat wrapNeededH = [self _preferredHeightForWidth:self.bounds.size.width];
-        NSInteger best = from;
-        CGFloat bestD = CGFLOAT_MAX;
-        for (NSInteger cand = 0; cand < n; cand++) {
-            NSRect gr = [self _gapRectPreviewMoveFrom:from to:cand wrapBandHeight:wrapNeededH];
-            if (NSIsEmptyRect(gr)) continue;
-            NSPoint c = NSMakePoint(NSMidX(gr), NSMidY(gr));
-            CGFloat d = hypot(p.x - c.x, p.y - c.y);
-            if (d < bestD) {
-                bestD = d;
-                best = cand;
-            }
+    NSInteger best = from;
+    CGFloat bestD = CGFLOAT_MAX;
+    for (NSInteger cand = 0; cand < n; cand++) {
+        NSRect gr = [self _gapRectPreviewMoveFrom:from to:cand];
+        if (NSIsEmptyRect(gr)) continue;
+        NSPoint c = NSMakePoint(NSMidX(gr), NSMidY(gr));
+        CGFloat d = hypot(p.x - c.x, p.y - c.y);
+        if (d < bestD) {
+            bestD = d;
+            best = cand;
         }
-        return best;
     }
-
-    NSMutableArray<_NppTabItem *> *compact = [NSMutableArray array];
-    for (_NppTabItem *t in _items) {
-        if (t.tabIndex != from) [compact addObject:t];
-    }
-
-    CGFloat cum = 0;
-    for (NSInteger s = 0; s < n; s++) {
-        if (s >= (NSInteger)compact.count)
-            return n - 1;
-        CGFloat w = compact[s].preferredWidth;
-        if (p.x < cum + w * 0.5)
-            return s;
-        cum += w;
-    }
-    return n - 1;
+    return best;
 }
 
-- (NSRect)_gapRectPreviewMoveFrom:(NSInteger)from to:(NSInteger)to wrapBandHeight:(CGFloat)wrapBandHeight {
+- (NSArray<_NppTabItem *> *)_previewTabsMovingFrom:(NSInteger)from to:(NSInteger)to {
     NSInteger n = (NSInteger)_items.count;
-    if (from < 0 || from >= n || n == 0) return NSZeroRect;
     to = MAX(0, MIN(n - 1, to));
-
     NSMutableArray<_NppTabItem *> *preview = [_items mutableCopy];
     _NppTabItem *moving = preview[from];
-    [preview removeObjectAtIndex:from];
-    [preview insertObject:moving atIndex:to];
+    [preview removeObjectAtIndex:(NSUInteger)from];
+    [preview insertObject:moving atIndex:(NSUInteger)to];
+    return preview;
+}
 
+- (NSRect)_gapRectPreviewMoveFrom:(NSInteger)from to:(NSInteger)to {
+    NSInteger n = (NSInteger)_items.count;
+    if (from < 0 || from >= n || n == 0) return NSZeroRect;
+
+    NSArray<_NppTabItem *> *preview = [self _previewTabsMovingFrom:from to:to];
+    _NppTabItem *moving = _items[from];
     CGFloat barW = self.bounds.size.width;
+    if (barW < 1) return NSZeroRect;
+
     CGFloat inactiveH = kTabBarBaseHeight - kTabTopGap - 1;
-    CGFloat activeH = inactiveH + kActiveBoost;
+    CGFloat activeH   = inactiveH + kActiveBoost;
+    NSRect gap = NSZeroRect;
 
-    if (!_wrapMode) {
-        CGFloat x = 0;
-        for (_NppTabItem *item in preview) {
-            CGFloat w = item.preferredWidth;
-            if (item.tabIndex == from)
-                return NSMakeRect(x, 1, w, inactiveH);
-            x += w;
-        }
-        return NSZeroRect;
+    if (_wrapMode) {
+        CGFloat neededH = [self _preferredHeightForTabs:preview barWidth:barW];
+        [self _layoutWrapTabs:preview barWidth:barW neededH:neededH
+                       activeH:activeH inactiveH:inactiveH
+                      skipItem:moving gapRect:&gap applyFrames:NO];
+    } else {
+        CGFloat barH = self.bounds.size.height;
+        if (barH < 1) barH = kTabBarBaseHeight;
+        [self _layoutScrollTabs:preview barWidth:barW barH:barH
+                        activeH:activeH inactiveH:inactiveH
+                       skipItem:moving gapRect:&gap applyFrames:NO];
     }
-
-    CGFloat neededH = wrapBandHeight > 0 ? wrapBandHeight : [self _preferredHeightForWidth:barW];
-    CGFloat rowStep = activeH + 1;
-    CGFloat x = 0;
-    NSInteger row = 0;
-    for (_NppTabItem *item in preview) {
-        CGFloat w = item.preferredWidth;
-        if (x + w > barW && x > 0) {
-            x = 0;
-            row++;
-        }
-        if (item.tabIndex == from) {
-            CGFloat y = neededH - (kTabTopGap - kActiveBoost) - activeH - ((CGFloat)row * rowStep);
-            return NSMakeRect(x, y, w, inactiveH);
-        }
-        x += w;
-    }
-    return NSZeroRect;
+    return gap;
 }
 
 - (void)moveTabAtIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex {
@@ -1186,12 +1175,28 @@ static CGFloat sumTabShrinkFloors(NSArray<_NppTabItem *> *tabs) {
                barWidth:(CGFloat)barW
                neededH:(CGFloat)neededH
                activeH:(CGFloat)activeH
-            inactiveH:(CGFloat)inactiveH {
+            inactiveH:(CGFloat)inactiveH
+               skipItem:(_NppTabItem * _Nullable)skipItem
+                gapRect:(NSRect * _Nullable)gapRectOut
+            applyFrames:(BOOL)applyFrames {
+    if (gapRectOut) *gapRectOut = NSZeroRect;
+
     NSArray<NSNumber *> *layoutWidths = [self _baseLayoutWidthsForWrapTabs:tabs barWidth:barW];
     NSArray<NSArray<_NppTabItem *> *> *rows =
         [self _finalWrapRowsForTabs:tabs barWidth:barW layoutWidths:layoutWidths];
     BOOL autoFill = rows.count >= 2;
     CGFloat rowStep = activeH + 1;
+
+    void (^placeTab)(NSInteger row, CGFloat x, CGFloat w, _NppTabItem *item, BOOL sel) =
+        ^(NSInteger row, CGFloat x, CGFloat w, _NppTabItem *item, BOOL sel) {
+            CGFloat y = neededH - (kTabTopGap - kActiveBoost) - activeH - ((CGFloat)row * rowStep);
+            NSRect frame = NSMakeRect(x, y, w, sel ? activeH : inactiveH);
+            if (skipItem && item == skipItem) {
+                if (gapRectOut) *gapRectOut = frame;
+                return;
+            }
+            if (applyFrames) item.frame = frame;
+        };
 
     if (autoFill) {
         NSInteger row = 0;
@@ -1210,8 +1215,7 @@ static CGFloat sumTabShrinkFloors(NSArray<_NppTabItem *> *tabs) {
                 _NppTabItem *item = rowTabs[i];
                 CGFloat w = widths[i].doubleValue;
                 BOOL sel = (item.tabIndex == _selectedIndex);
-                CGFloat y = neededH - (kTabTopGap - kActiveBoost) - activeH - ((CGFloat)row * rowStep);
-                item.frame = NSMakeRect(x, y, w, sel ? activeH : inactiveH);
+                placeTab(row, x, w, item, sel);
                 x += w;
             }
             row++;
@@ -1226,22 +1230,70 @@ static CGFloat sumTabShrinkFloors(NSArray<_NppTabItem *> *tabs) {
         CGFloat w = layoutWidths[i].doubleValue;
         if (x + w > barW && x > 0) { x = 0; row++; }
         BOOL sel = (item.tabIndex == _selectedIndex);
-        CGFloat y = neededH - (kTabTopGap - kActiveBoost) - activeH - ((CGFloat)row * rowStep);
-        item.frame = NSMakeRect(x, y, w, sel ? activeH : inactiveH);
+        placeTab(row, x, w, item, sel);
         x += w;
     }
 }
 
-- (CGFloat)_preferredHeightForWidth:(CGFloat)barW {
-    if (!_wrapMode || _items.count == 0) return kTabBarBaseHeight;
+- (void)_layoutScrollTabs:(NSArray<_NppTabItem *> *)tabs
+                 barWidth:(CGFloat)barW
+                     barH:(CGFloat)barH
+                  activeH:(CGFloat)activeH
+               inactiveH:(CGFloat)inactiveH
+                 skipItem:(_NppTabItem * _Nullable)skipItem
+                  gapRect:(NSRect * _Nullable)gapRectOut
+              applyFrames:(BOOL)applyFrames {
+    if (gapRectOut) *gapRectOut = NSZeroRect;
+
+    CGFloat totalTabsW = 0;
+    for (_NppTabItem *item in tabs) totalTabsW += item.preferredWidth;
+
+    BOOL    needsArrows = (totalTabsW > barW);
+    CGFloat arrowsW     = needsArrows ? (2.0 * kArrowBtnW) : 0.0;
+    CGFloat scrollW     = barW - arrowsW;
+
+    if (applyFrames) {
+        _scrollView.frame = NSMakeRect(0, 0, scrollW, barH);
+        _scrollLeftBtn.hidden  = !needsArrows;
+        _scrollRightBtn.hidden = !needsArrows;
+        if (needsArrows) {
+            _scrollLeftBtn.frame  = NSMakeRect(scrollW,              0, kArrowBtnW, barH);
+            _scrollRightBtn.frame = NSMakeRect(scrollW + kArrowBtnW, 0, kArrowBtnW, barH);
+        }
+    }
+
+    CGFloat x = 0;
+    for (_NppTabItem *item in tabs) {
+        CGFloat w = item.preferredWidth;
+        BOOL sel = (item.tabIndex == _selectedIndex);
+        if (skipItem && item == skipItem) {
+            if (gapRectOut) *gapRectOut = NSMakeRect(x, 1, w, inactiveH);
+            x += w;
+            continue;
+        }
+        if (applyFrames)
+            item.frame = NSMakeRect(x, 1, w, sel ? activeH : inactiveH);
+        x += w;
+    }
+
+    if (applyFrames)
+        _containerView.frame = NSMakeRect(0, 0, MAX(x, scrollW), barH);
+}
+
+- (CGFloat)_preferredHeightForTabs:(NSArray<_NppTabItem *> *)tabs barWidth:(CGFloat)barW {
+    if (!_wrapMode || tabs.count == 0) return kTabBarBaseHeight;
 
     CGFloat inactiveH = kTabBarBaseHeight - kTabTopGap - 1;
     CGFloat activeH   = inactiveH + kActiveBoost;
     CGFloat rowStep   = activeH + 1;
-    NSInteger rows = (NSInteger)[self _finalWrapRowsForTabs:_items barWidth:barW layoutWidths:nil].count;
+    NSInteger rows = (NSInteger)[self _finalWrapRowsForTabs:tabs barWidth:barW layoutWidths:nil].count;
     if (rows < 1) rows = 1;
 
     return 1 + ((CGFloat)rows - 1) * rowStep + activeH + (kTabTopGap - kActiveBoost);
+}
+
+- (CGFloat)_preferredHeightForWidth:(CGFloat)barW {
+    return [self _preferredHeightForTabs:_items barWidth:barW];
 }
 
 - (void)_setPreferredHeight:(CGFloat)height {
@@ -1262,10 +1314,8 @@ static CGFloat sumTabShrinkFloors(NSArray<_NppTabItem *> *tabs) {
 
     to = MAX(0, MIN(n - 1, to));
 
-    NSMutableArray<_NppTabItem *> *preview = [_items mutableCopy];
-    _NppTabItem *moving = preview[from];
-    [preview removeObjectAtIndex:from];
-    [preview insertObject:moving atIndex:to];
+    NSArray<_NppTabItem *> *preview = [self _previewTabsMovingFrom:from to:to];
+    _NppTabItem *moving = _items[from];
 
     CGFloat barW = self.bounds.size.width;
     CGFloat barH = self.bounds.size.height;
@@ -1275,7 +1325,7 @@ static CGFloat sumTabShrinkFloors(NSArray<_NppTabItem *> *tabs) {
     CGFloat activeH = inactiveH + kActiveBoost;
 
     if (_wrapMode) {
-        CGFloat neededH = [self _preferredHeightForWidth:barW];
+        CGFloat neededH = [self _preferredHeightForTabs:preview barWidth:barW];
         [self _setPreferredHeight:neededH];
 
         _scrollLeftBtn.hidden = YES;
@@ -1283,59 +1333,18 @@ static CGFloat sumTabShrinkFloors(NSArray<_NppTabItem *> *tabs) {
         _scrollView.frame = NSMakeRect(0, 0, barW, barH);
         [_scrollView.contentView scrollToPoint:NSZeroPoint];
 
-        CGFloat x = 0;
-        NSInteger row = 0;
-        CGFloat rowAdvance = activeH + 1;
-        for (_NppTabItem *item in preview) {
-            CGFloat w = item.preferredWidth;
-            if (x + w > barW && x > 0) {
-                x = 0;
-                row++;
-            }
-            if (item.tabIndex == from) {
-                x += w;
-                continue;
-            }
-            BOOL sel = (item.tabIndex == _selectedIndex && item.tabIndex != from);
-            CGFloat y = neededH - (kTabTopGap - kActiveBoost) - activeH - ((CGFloat)row * rowAdvance);
-            item.frame = NSMakeRect(x, y, w, sel ? activeH : inactiveH);
-            x += w;
-        }
+        [self _layoutWrapTabs:preview barWidth:barW neededH:neededH
+                       activeH:activeH inactiveH:inactiveH
+                      skipItem:moving gapRect:NULL applyFrames:YES];
         _containerView.frame = NSMakeRect(0, 0, barW, neededH);
         [self setNeedsDisplay:YES];
         return;
     }
 
     [self _setPreferredHeight:kTabBarBaseHeight];
-
-    CGFloat totalTabsW = 0;
-    for (_NppTabItem *item in _items) totalTabsW += item.preferredWidth;
-
-    BOOL    needsArrows = (totalTabsW > barW);
-    CGFloat arrowsW     = needsArrows ? (2.0 * kArrowBtnW) : 0.0;
-    CGFloat scrollW     = barW - arrowsW;
-
-    _scrollView.frame = NSMakeRect(0, 0, scrollW, barH);
-
-    _scrollLeftBtn.hidden  = !needsArrows;
-    _scrollRightBtn.hidden = !needsArrows;
-    if (needsArrows) {
-        _scrollLeftBtn.frame  = NSMakeRect(scrollW,              0, kArrowBtnW, barH);
-        _scrollRightBtn.frame = NSMakeRect(scrollW + kArrowBtnW, 0, kArrowBtnW, barH);
-    }
-
-    CGFloat x = 0;
-    for (_NppTabItem *item in preview) {
-        CGFloat w = item.preferredWidth;
-        if (item.tabIndex == from) {
-            x += w;
-            continue;
-        }
-        BOOL sel = (item.tabIndex == _selectedIndex && item.tabIndex != from);
-        item.frame = NSMakeRect(x, 1, w, sel ? activeH : inactiveH);
-        x += w;
-    }
-    _containerView.frame = NSMakeRect(0, 0, MAX(x, scrollW), barH);
+    [self _layoutScrollTabs:preview barWidth:barW barH:barH
+                    activeH:activeH inactiveH:inactiveH
+                   skipItem:moving gapRect:NULL applyFrames:YES];
     [self setNeedsDisplay:YES];
 }
 
@@ -1362,7 +1371,8 @@ static CGFloat sumTabShrinkFloors(NSArray<_NppTabItem *> *tabs) {
         [_scrollView.contentView scrollToPoint:NSZeroPoint];
 
         [self _layoutWrapTabs:_items barWidth:barW neededH:neededH
-                       activeH:activeH inactiveH:inactiveH];
+                       activeH:activeH inactiveH:inactiveH
+                      skipItem:nil gapRect:NULL applyFrames:YES];
         _containerView.frame = NSMakeRect(0, 0, barW, neededH);
         [self setNeedsDisplay:YES];
         return;
@@ -1370,32 +1380,9 @@ static CGFloat sumTabShrinkFloors(NSArray<_NppTabItem *> *tabs) {
 
     [self _setPreferredHeight:kTabBarBaseHeight];
 
-    // ── Non-wrap: calculate total tab width, decide if arrows needed ──────────
-    CGFloat totalTabsW = 0;
-    for (_NppTabItem *item in _items) totalTabsW += item.preferredWidth;
-
-    BOOL    needsArrows = (totalTabsW > barW);
-    CGFloat arrowsW     = needsArrows ? (2.0 * kArrowBtnW) : 0.0;
-    CGFloat scrollW     = barW - arrowsW;
-
-    _scrollView.frame = NSMakeRect(0, 0, scrollW, barH);
-
-    _scrollLeftBtn.hidden  = !needsArrows;
-    _scrollRightBtn.hidden = !needsArrows;
-    if (needsArrows) {
-        _scrollLeftBtn.frame  = NSMakeRect(scrollW,              0, kArrowBtnW, barH);
-        _scrollRightBtn.frame = NSMakeRect(scrollW + kArrowBtnW, 0, kArrowBtnW, barH);
-    }
-
-    // Position tabs: inactive at y=1; active at y=1 but taller (raised look)
-    CGFloat x = 0;
-    for (_NppTabItem *item in _items) {
-        CGFloat w  = item.preferredWidth;
-        BOOL    sel = (item.tabIndex == _selectedIndex);
-        item.frame  = NSMakeRect(x, 1, w, sel ? activeH : inactiveH);
-        x += w;
-    }
-    _containerView.frame = NSMakeRect(0, 0, MAX(x, scrollW), barH);
+    [self _layoutScrollTabs:_items barWidth:barW barH:barH
+                    activeH:activeH inactiveH:inactiveH
+                   skipItem:nil gapRect:NULL applyFrames:YES];
     [self setNeedsDisplay:YES];
 }
 
