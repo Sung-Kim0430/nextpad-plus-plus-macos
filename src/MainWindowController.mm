@@ -10139,6 +10139,9 @@ static BOOL _writeCLIScript(NSString *script, NSString *path, NSError **outErr) 
     _subTabManagerH.tabBar.wrapMode = wrapTabs;
     _subTabManagerV.tabBar.wrapMode = wrapTabs;
 
+    for (NppTabBar *bar in @[_tabManager.tabBar, _subTabManagerH.tabBar, _subTabManagerV.tabBar])
+        [bar relayout];
+
     // Issue #183: apply the "Hide tab bar" pref live.
     [self _applyTabBarVisibility:[ud boolForKey:kPrefHideTabBar]];
 
