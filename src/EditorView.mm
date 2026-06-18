@@ -697,7 +697,11 @@ static NSUInteger nppLargeFileThreshold(void) {
     return [self saveToPath:_filePath error:error];
 }
 
-- (BOOL)saveToPath:(NSString *)path error:(NSError **)error {
+/// Encode the current document (honouring its encoding/BOM) and write the bytes
+/// to `path`. Pure I/O: does NOT change the editor's identity (file path,
+/// modified state, save point, backup, clone links, language). Returns NO and
+/// sets *error on failure.
+- (BOOL)_writeContentsToPath:(NSString *)path error:(NSError **)error {
     BOOL ok = NO;
 
     if (_fileEncoding == NSUTF8StringEncoding) {
@@ -767,6 +771,19 @@ static NSUInteger nppLargeFileThreshold(void) {
                                                code:NSFileWriteUnknownError userInfo:nil];
         return NO;
     }
+    return YES;
+}
+
+/// Write a snapshot of the current contents to `path` WITHOUT repointing the
+/// editor at it. Used by "Save a Copy As": the live document keeps its original
+/// file, modified state, save point and backup, so subsequent saves still go to
+/// the original. Returns NO and sets *error on failure.
+- (BOOL)writeCopyToPath:(NSString *)path error:(NSError **)error {
+    return [self _writeContentsToPath:path error:error];
+}
+
+- (BOOL)saveToPath:(NSString *)path error:(NSError **)error {
+    if (![self _writeContentsToPath:path error:error]) return NO;
 
     NSString *oldPath = _filePath;
     _filePath = [path copy];

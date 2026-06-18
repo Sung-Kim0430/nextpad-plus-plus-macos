@@ -8250,7 +8250,10 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse r) {
         if (r != NSModalResponseOK) return;
         NSError *err;
-        if (![ed saveToPath:panel.URL.path error:&err])
+        // "Save a Copy As" writes a snapshot but must NOT repoint the live
+        // document at the copy — otherwise future saves/edits would go to the
+        // copy and the original would be stranded.
+        if (![ed writeCopyToPath:panel.URL.path error:&err])
             [[NSAlert alertWithError:err] beginSheetModalForWindow:self.window completionHandler:nil];
     }];
 }
