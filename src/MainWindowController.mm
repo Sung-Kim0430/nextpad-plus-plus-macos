@@ -4817,13 +4817,20 @@ static void removeMacroFromShortcutsXML(NSString *name) {
     // Save all modified files silently. Named files save to disk;
     // untitled files prompt Save As for each one.
     NSArray<TabManager *> *managers = @[_tabManager, _subTabManagerH, _subTabManagerV];
+    NSMutableArray<NSString *> *failures = [NSMutableArray array];
     for (TabManager *mgr in managers) {
         for (EditorView *ed in mgr.allEditors.copy) {
             if (!ed.isModified) continue;
             if (ed.filePath) {
                 NSError *err;
-                [ed saveError:&err];
+                // Don't silently swallow a failed write: the tab stays dirty but
+                // the user is told "Save All" succeeded. Collect failures and
+                // surface them, matching saveDocument:'s alert-on-failure.
+                if (![ed saveError:&err])
+                    [failures addObject:[NSString stringWithFormat:@"%@ — %@",
+                        ed.displayName, err.localizedDescription ?: @"save failed"]];
             } else {
+                // runSavePanelForEditor: surfaces its own error on failure.
                 [mgr runSavePanelForEditor:ed completion:nil];
             }
         }
@@ -4832,6 +4839,12 @@ static void removeMacroFromShortcutsXML(NSString *name) {
     [self updateTitle];
     if (_docListPanel && [_sidePanelHost hasPanel:_docListPanel])
         [_docListPanel refreshModifiedStates];
+    if (failures.count) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = [[NppLocalizer shared] translate:@"Some documents could not be saved"];
+        alert.informativeText = [failures componentsJoinedByString:@"\n"];
+        [alert runModal];
+    }
 }
 
 - (void)closeCurrentTab:(id)sender {
