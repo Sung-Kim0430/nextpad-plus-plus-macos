@@ -2185,6 +2185,12 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
         [NSEvent removeMonitor:_scrollZoomEventMonitor];
         _scrollZoomEventMonitor = nil;
     }
+    // Defensive: windowWillClose: already tears these down, but invalidate here
+    // too in case the controller is released without a window-close notification.
+    [_scrollSyncTimer invalidate];
+    _scrollSyncTimer = nil;
+    [_autoSaveTimer invalidate];
+    _autoSaveTimer = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
@@ -10614,6 +10620,12 @@ static int64_t _sysctlInt(const char *name) {
 - (void)windowWillClose:(NSNotification *)n {
     [_autoSaveTimer invalidate];
     _autoSaveTimer = nil;
+    // The scroll-sync timer also targets self with repeats:YES; if a split with
+    // sync scrolling is active it would otherwise retain this controller forever
+    // (run-loop keeps the timer alive) and keep polling the closed window's
+    // editors. Mirror the _autoSaveTimer teardown above.
+    [_scrollSyncTimer invalidate];
+    _scrollSyncTimer = nil;
     [self saveWindowFrame];
     // Note: session already saved in windowShouldClose:
 
