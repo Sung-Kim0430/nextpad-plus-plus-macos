@@ -4853,8 +4853,11 @@ static NSSet<NSString *> *_cLikeLanguages() {
     [_scintillaView message:SCI_BEGINUNDOACTION];
     [_scintillaView message:SCI_SETTARGETSTART wParam:(uptr_t)start];
     [_scintillaView message:SCI_SETTARGETEND   wParam:(uptr_t)end];
-    [_scintillaView message:SCI_REPLACETARGET  wParam:(uptr_t)joined.length
-                                               lParam:(sptr_t)joined.UTF8String];
+    // SCI_REPLACETARGET wParam is a BYTE count — use the UTF-8 byte length, not
+    // joined.length (UTF-16 units), or non-ASCII content gets truncated.
+    const char *joinedUTF8 = joined.UTF8String;
+    [_scintillaView message:SCI_REPLACETARGET  wParam:(uptr_t)strlen(joinedUTF8)
+                                               lParam:(sptr_t)joinedUTF8];
     [_scintillaView message:SCI_ENDUNDOACTION];
 }
 
