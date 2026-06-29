@@ -4715,9 +4715,13 @@ static NSSet<NSString *> *_cLikeLanguages() {
 
 /// Get selected text as NSString. Returns nil if no selection.
 - (nullable NSString *)selectedText {
+    // SCI_GETSELTEXT returns the selection length in bytes WITHOUT the NUL,
+    // but writes a terminating NUL one byte past that length — so the buffer
+    // must be len + 1 bytes (len == 1 is a real single-character selection).
     sptr_t len = [_scintillaView message:SCI_GETSELTEXT wParam:0 lParam:0];
-    if (len <= 1) return nil; // no selection (len includes NUL)
-    char *buf = (char *)malloc((size_t)len);
+    if (len <= 0) return nil; // no selection
+    char *buf = (char *)malloc((size_t)len + 1);
+    if (!buf) return nil;
     [_scintillaView message:SCI_GETSELTEXT wParam:0 lParam:(sptr_t)buf];
     NSString *s = [NSString stringWithUTF8String:buf] ?: @"";
     free(buf);
