@@ -30,6 +30,8 @@
         @"runMacro:",
         @"runMacroMultiple:",
         @"runMacroMultipleTimes:",
+        @"showBatchRunDialog:",
+        @"showBatchRunDialogForFolder:",
         @"saveCurrentMacro:",
         @"runSavedMacro:",
 
@@ -209,7 +211,18 @@
             }
         }
 
-        [editor recordMenuCommand:NSStringFromSelector(action)];
+        NSString *actionName = NSStringFromSelector(action);
+        // Plugin commands all share the selector pluginMenuAction:, so record
+        // the sender's tag (= FuncItem _cmdID) alongside it. Playback uses the
+        // cmdID to dispatch the exact command; ordinary menu items pass 0.
+        NSInteger pluginCmdID = 0;
+        if ([actionName isEqualToString:@"pluginMenuAction:"]) {
+            if ([sender isKindOfClass:[NSMenuItem class]])
+                pluginCmdID = [(NSMenuItem *)sender tag];
+            else if ([sender isKindOfClass:[NSToolbarItem class]])
+                pluginCmdID = [(NSToolbarItem *)sender tag];
+        }
+        [editor recordMenuCommand:actionName pluginCmdID:pluginCmdID];
     }
 
     return result;

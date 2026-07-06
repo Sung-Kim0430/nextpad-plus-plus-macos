@@ -1,5 +1,22 @@
 #import "SearchEngine.h"
 #import "Scintilla.h"
+// EMPTYMATCH_* / SKIPCRLFASONE flag constants — matches Windows
+// boostregex/BoostRegexSearch.h. Consumed by regex/NppRegexSearch.cxx (our
+// SCI_OWNREGEX implementation).
+#import "../regex/NppRegexSearch.h"
+
+// Per-operation regex flag bundles. Mirrors Windows FindReplaceDlg.cpp:3000-3014
+// FINDNEXTTYPE_* matrix:
+//   - Single Find Next  → EMPTYMATCH_ALL (allow empty matches anywhere)
+//   - Find Next for Replace → also ALLOWATSTART (so user can replace the
+//     selected match without it being treated as a continuation)
+//   - Replace All / Find All / Mark All / Count → NOTAFTERMATCH (reject empty
+//     match at continuation startPos, the fix for issue #151)
+// All ops carry SKIPCRLFASONE so the advance-past-rejected-empty step treats
+// CRLF as one user character.
+static int kRegexEmptyFlagsFindNext      = SCFIND_REGEXP_EMPTYMATCH_ALL | SCFIND_REGEXP_SKIPCRLFASONE;
+static int kRegexEmptyFlagsFindForReplace = SCFIND_REGEXP_EMPTYMATCH_ALL | SCFIND_REGEXP_EMPTYMATCH_ALLOWATSTART | SCFIND_REGEXP_SKIPCRLFASONE;
+static int kRegexEmptyFlagsLoopOp        = SCFIND_REGEXP_EMPTYMATCH_NOTAFTERMATCH | SCFIND_REGEXP_SKIPCRLFASONE;
 
 // ── NPPFindOptions ───────────────────────────────────────────────────────────
 
@@ -112,8 +129,15 @@
     if (opts.matchCase) flags |= SCFIND_MATCHCASE;
     if (opts.wholeWord && opts.searchType != NPPSearchRegex) flags |= SCFIND_WHOLEWORD;
     if (opts.searchType == NPPSearchRegex) {
-        flags |= SCFIND_REGEXP | SCFIND_POSIX;
-        if (opts.dotMatchesNewline) flags |= 0x10000000; // SCFIND_REGEXP_DOTMATCHESNL
+        // Issue #108 — SCFIND_POSIX selects Scintilla's RESearch engine which
+        // lacks `|` alternation, lookaheads, non-capturing groups, and `\b`
+        // word boundaries (RESearch uses `\<` and `\>` instead). SCFIND_CXX11REGEX
+        // routes to std::regex (ECMAScript flavor), giving feature parity with
+        // Windows NPP Boost.Regex for in-line patterns. Multi-line patterns
+        // crossing `\n` still don't work because our build doesn't define
+        // REGEX_MULTILINE — the line-by-line scan in MatchOnLines remains.
+        flags |= SCFIND_REGEXP | SCFIND_CXX11REGEX;
+        if (opts.dotMatchesNewline) flags |= SCFIND_REGEXP_DOTMATCHESNL;
     }
     return flags;
 }
@@ -134,6 +158,7 @@
     const char *needle = [self preparedNeedle:opts];
     size_t needleLen = strlen(needle);
     int flags = [self scintillaFlagsForOptions:opts];
+    if (opts.searchType == NPPSearchRegex) flags |= kRegexEmptyFlagsFindNext;
 
     sptr_t docLen = [sci message:SCI_GETLENGTH];
     sptr_t selStart = [sci message:SCI_GETSELECTIONSTART];
@@ -179,6 +204,12 @@
 
     const char *needle = [self preparedNeedle:opts];
     int flags = [self scintillaFlagsForOptions:opts];
+    // Selection-match probe: the selection IS what the user picked to replace
+    // — allow empty match exactly at its start so e.g. `$` matches a previously
+    // found end-of-line selection. The follow-up Find Next then uses the
+    // FindNext flag set (no ALLOWATSTART, so the freshly-replaced position
+    // doesn't trigger another zero-width match at the same byte).
+    if (opts.searchType == NPPSearchRegex) flags |= kRegexEmptyFlagsFindForReplace;
 
     // Check if current selection matches
     sptr_t selStart = [sci message:SCI_GETSELECTIONSTART];
@@ -216,6 +247,10 @@
     const char *needle = [self preparedNeedle:opts];
     size_t needleLen = strlen(needle);
     int flags = [self scintillaFlagsForOptions:opts];
+    // Loop semantics — see Windows FindReplaceDlg.cpp:3461. NOTAFTERMATCH
+    // rejects zero-width matches at the continuation position, the fix for
+    // issue #151 ($ → X freezing on docs ending with \n).
+    if (opts.searchType == NPPSearchRegex) flags |= kRegexEmptyFlagsLoopOp;
 
     NSString *replaceText = opts.replaceText ?: @"";
     if (opts.searchType == NPPSearchExtended)
@@ -274,6 +309,7 @@
     const char *needle = [self preparedNeedle:opts];
     size_t needleLen = strlen(needle);
     int flags = [self scintillaFlagsForOptions:opts];
+    if (opts.searchType == NPPSearchRegex) flags |= kRegexEmptyFlagsLoopOp;
 
     [sci message:SCI_SETSEARCHFLAGS wParam:(uptr_t)flags];
 
@@ -302,6 +338,7 @@
     const char *needle = [self preparedNeedle:opts];
     size_t needleLen = strlen(needle);
     int flags = [self scintillaFlagsForOptions:opts];
+    if (opts.searchType == NPPSearchRegex) flags |= kRegexEmptyFlagsLoopOp;
 
     [sci message:SCI_SETSEARCHFLAGS wParam:(uptr_t)flags];
 
@@ -351,6 +388,7 @@
     const char *needle = [self preparedNeedle:opts];
     size_t needleLen = strlen(needle);
     int flags = [self scintillaFlagsForOptions:opts];
+    if (opts.searchType == NPPSearchRegex) flags |= kRegexEmptyFlagsLoopOp;
 
     // Mark indicator slot: use indicator 31 for "Find Mark Style"
     static const int kFindMarkIndicator = 31;
@@ -423,6 +461,22 @@
     NSInteger filesScanned = 0;
     NSString *rel;
 
+    // Compile the regex once for the whole call — pattern, case-sensitivity,
+    // and dot-matches-newline are invariant across every file and line. The
+    // sister function findInFilePaths: does the same.
+    NSRegularExpression *re = nil;
+    if (opts.searchType == NPPSearchRegex) {
+        NSRegularExpressionOptions reOpts = 0;
+        if (!opts.matchCase) reOpts |= NSRegularExpressionCaseInsensitive;
+        if (opts.dotMatchesNewline) reOpts |= NSRegularExpressionDotMatchesLineSeparators;
+        re = [NSRegularExpression regularExpressionWithPattern:searchText
+                                                       options:reOpts error:nil];
+        if (!re) {
+            if (totalFilesScanned) *totalFilesScanned = 0;
+            return allResults;
+        }
+    }
+
     while ((rel = [en nextObject])) {
         if (cancelFlag && *cancelFlag) break;
 
@@ -465,12 +519,6 @@
             NSRange range;
 
             if (opts.searchType == NPPSearchRegex) {
-                NSRegularExpressionOptions reOpts = 0;
-                if (!opts.matchCase) reOpts |= NSRegularExpressionCaseInsensitive;
-                if (opts.dotMatchesNewline) reOpts |= NSRegularExpressionDotMatchesLineSeparators;
-                NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:searchText
-                                                                                   options:reOpts error:nil];
-                if (!re) { if (totalFilesScanned) *totalFilesScanned = filesScanned; return allResults; }
                 NSTextCheckingResult *m = [re firstMatchInString:line options:0
                                                           range:NSMakeRange(0, line.length)];
                 if (!m) continue;
@@ -550,6 +598,24 @@
     __block NSInteger totalHits = 0;
     NSInteger filesScanned = 0;
 
+    // Compile the regex once for the whole call — pattern, case-sensitivity,
+    // and dot-matches-newline are invariant across every file and line.
+    // (PR #57 hoisted this out of the per-line loop; we hoist further out
+    // of the per-file loop too.) NSRegularExpression is documented thread-
+    // safe for read-only use, but we don't share across threads here anyway.
+    NSRegularExpression *re = nil;
+    if (opts.searchType == NPPSearchRegex) {
+        NSRegularExpressionOptions reOpts = 0;
+        if (!opts.matchCase) reOpts |= NSRegularExpressionCaseInsensitive;
+        if (opts.dotMatchesNewline) reOpts |= NSRegularExpressionDotMatchesLineSeparators;
+        re = [NSRegularExpression regularExpressionWithPattern:searchText
+                                                       options:reOpts error:nil];
+        if (!re) {
+            if (totalFilesScanned) *totalFilesScanned = 0;
+            return allResults;
+        }
+    }
+
     for (NSString *full in filePaths) {
         if (cancelFlag && *cancelFlag) break;
 
@@ -581,12 +647,6 @@
             NSRange range;
 
             if (opts.searchType == NPPSearchRegex) {
-                NSRegularExpressionOptions reOpts = 0;
-                if (!opts.matchCase) reOpts |= NSRegularExpressionCaseInsensitive;
-                if (opts.dotMatchesNewline) reOpts |= NSRegularExpressionDotMatchesLineSeparators;
-                NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:searchText
-                                                                                   options:reOpts error:nil];
-                if (!re) { if (totalFilesScanned) *totalFilesScanned = filesScanned; return allResults; }
                 NSTextCheckingResult *m = [re firstMatchInString:line options:0
                                                           range:NSMakeRange(0, line.length)];
                 if (!m) continue;

@@ -9,7 +9,13 @@ extern NSNotificationName const EditorViewCursorDidMoveNotification;
 /// Posted when a Scintilla editor gains keyboard focus (SCN_FOCUSIN).
 extern NSNotificationName const EditorViewDidGainFocusNotification;
 
-/// Wraps ScintillaView and provides Notepad++-style editor functionality.
+/// Posted when an editor's contents are written to disk via saveFileToPath:.
+/// Object is the EditorView. MainWindowController listens and conditionally
+/// refreshes the git diff gutter only when the GitPanel is open — keeps git
+/// invocations gated to the panel-visible state (issue #76).
+extern NSNotificationName const EditorViewDidSaveNotification;
+
+/// Wraps ScintillaView and provides Nextpad++-style editor functionality.
 @interface EditorView : NSView <ScintillaNotificationProtocol>
 
 @property (nonatomic, readonly) ScintillaView *scintillaView;
@@ -18,7 +24,11 @@ extern NSNotificationName const EditorViewDidGainFocusNotification;
 /// Unique 1-based index for untitled tabs — mirrors NPP's per-buffer ID.
 @property (nonatomic, readonly) NSInteger untitledIndex;
 
-/// Path to the auto-backup copy in ~/.notepad++/backup/ (nil if never backed up).
+/// Custom display name for an UNTITLED tab, set via Rename (issue #177). When
+/// non-nil it overrides the "new N" name; ignored once the buffer has a filePath.
+@property (nonatomic, copy, nullable) NSString *customTabName;
+
+/// Path to the auto-backup copy in ~/Library/Application Support/Nextpad++/backup/ (nil if never backed up).
 @property (nonatomic, copy, nullable) NSString *backupFilePath;
 
 /// Restore the untitled index from a saved session (keeps tab name consistent).
@@ -82,6 +92,10 @@ extern NSNotificationName const EditorViewDidGainFocusNotification;
 /// Save to a specific path.
 - (BOOL)saveToPath:(NSString *)path error:(NSError **)error;
 
+/// Write a snapshot of the current content to a path WITHOUT changing which
+/// file this editor is bound to ("Save a Copy As"). Returns YES on success.
+- (BOOL)writeCopyToPath:(NSString *)path error:(NSError **)error;
+
 /// Set the syntax language by name (e.g. "cpp", "python"). Pass "" for plain text.
 - (void)setLanguage:(NSString *)languageName;
 
@@ -129,6 +143,10 @@ extern NSNotificationName const EditorViewDidGainFocusNotification;
 - (void)runMacroActions:(NSArray<NSDictionary *> *)actions;
 /// Record a menu command action (type 2) by selector name during macro recording.
 - (void)recordMenuCommand:(NSString *)selectorName;
+/// Record a menu command together with a plugin command ID. For plugin
+/// commands (selector pluginMenuAction:), cmdID is the FuncItem _cmdID so
+/// playback can dispatch the exact command; pass 0 for ordinary menu items.
+- (void)recordMenuCommand:(NSString *)selectorName pluginCmdID:(NSInteger)cmdID;
 /// The currently recorded macro actions (nil / empty if nothing recorded).
 @property (nonatomic, readonly, nullable) NSArray<NSDictionary *> *macroActions;
 

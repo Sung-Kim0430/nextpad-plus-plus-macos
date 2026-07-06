@@ -8,6 +8,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)tabBar:(NppTabBar *)bar didSelectTabAtIndex:(NSInteger)index;
 - (void)tabBar:(NppTabBar *)bar didCloseTabAtIndex:(NSInteger)index;
 @optional
+- (void)tabBar:(NppTabBar *)bar didMoveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex;
 /// Fires when the user double-clicks empty space to the right of the last
 /// tab (or below the last row in wrap mode). Implementer typically opens
 /// a new untitled tab in the tab manager that owns `bar`. Optional — bars
@@ -15,7 +16,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)tabBarDidRequestNewTab:(NppTabBar *)bar;
 @end
 
-/// Left-aligned, scrollable tab bar styled after Notepad++.
+/// Left-aligned tab bar styled after Nextpad++.
 @interface NppTabBar : NSView
 
 @property (nonatomic, weak, nullable) id<NppTabBarDelegate> delegate;
@@ -39,9 +40,22 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setTabColorAtIndex:(NSInteger)index colorId:(NSInteger)colorId;
 /// Returns the color identifier for the tab at index (-1 if none).
 - (NSInteger)tabColorAtIndex:(NSInteger)index;
+/// The fill NSColor for a color identifier (0–4), or nil for -1/none. Lets other
+/// UI (e.g. the Document List) tint records to match a colored tab.
++ (nullable NSColor *)tabFillColorForId:(NSInteger)colorId;
 
 /// When YES tabs wrap to multiple rows instead of scrolling horizontally.
+/// The view's intrinsic height grows to fit all rows.
 @property (nonatomic) BOOL wrapMode;
+
+/// Recompute tab frames after a preference change (max width, close button, etc.).
+- (void)relayout;
+
+/// Builds the tab right-click context menu (from tabContextMenu.xml, with a
+/// bundled fallback). Exposed so other surfaces — e.g. the Document List
+/// panel — can present the identical menu. The menu's commands act on the
+/// current document, so callers should select the target tab first.
+- (NSMenu *)buildTabContextMenu;
 
 @end
 

@@ -9,6 +9,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// Open a file (called by AppDelegate when the OS hands us a file to open).
 - (void)openFileAtPath:(NSString *)path;
 
+/// Bring the receiver's window to the user's attention: activate the app,
+/// deminiaturize the window if it's currently in the Dock, and order it
+/// front. Idempotent — safe to call when the window is already key/visible.
+/// Used by AppDelegate's open-file delegate hooks so opening a file from
+/// Finder while the window is minimized actually surfaces the window
+/// instead of silently adding the file to a hidden tab (issue #63).
+- (void)bringWindowForward;
+
 /// The active editor in the currently focused pane (for plugin access).
 - (nullable EditorView *)currentEditor;
 
@@ -19,7 +27,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Load a session file (plist format with tabs array).
 - (void)loadSessionFromPath:(NSString *)path;
 
-/// Restore the last session from ~/.notepad++/session.plist.
+/// Restore the last session from ~/Library/Application Support/Nextpad++/session.plist.
 - (BOOL)restoreLastSession;
 
 /// Add a plugin-provided toolbar icon.  Called by NppPluginManager when a
@@ -66,12 +74,17 @@ NS_ASSUME_NONNULL_BEGIN
 /// host.  Returns NO for nil.
 - (BOOL)isPluginPanelShown:(nullable NSView *)panel;
 
+/// Re-open the built-in side panels that were open at last quit (issue
+/// #132). Gated on the "Remember panel visibility" preference. Call once,
+/// on the primary window only, after it has been shown.
+- (void)restoreSidePanels;
+
 @end
 
-/// Write current NSUserDefaults preferences to ~/.notepad++/config.xml.
+/// Write current NSUserDefaults preferences to ~/Library/Application Support/Nextpad++/config.xml.
 void writeConfigXML(void);
 
-/// Read ~/.notepad++/config.xml and apply settings to NSUserDefaults.
+/// Read ~/Library/Application Support/Nextpad++/config.xml and apply settings to NSUserDefaults.
 void readConfigXML(void);
 
 /// Regenerate toolbarButtonsConf_example.xml with current plugin entries.

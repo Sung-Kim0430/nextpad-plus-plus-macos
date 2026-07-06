@@ -2,6 +2,7 @@
 
 NSNotificationName const NPPDarkModeChangedNotification = @"NPPDarkModeChangedNotification";
 NSString *const kPrefDarkMode = @"NPPDarkMode";
+NSString *const kPrefAppearanceStyle = @"NPPAppearanceStyle";
 
 // ── Toolbar icon name mapping: standard name → Fluent name ──────────────────
 // To remap an icon: change the right-hand value only.
@@ -56,6 +57,8 @@ static NSDictionary<NSString *, NSString *> *toolbarIconMapping(void) {
     BOOL _cachedIsDark;
 }
 
+@synthesize appearanceStyle = _appearanceStyle;
+
 + (instancetype)shared {
     static NppThemeManager *inst;
     static dispatch_once_t once;
@@ -71,6 +74,10 @@ static NSDictionary<NSString *, NSString *> *toolbarIconMapping(void) {
         _mode = (NppDarkModeOption)saved;
         [self _recalcIsDark];
         [self _applyAppearance];
+
+        // Appearance profile (Auto/Classic/Tahoe). Absent integer key → 0 → Auto.
+        _appearanceStyle = (NppAppearanceStyle)[[NSUserDefaults standardUserDefaults]
+            integerForKey:kPrefAppearanceStyle];
 
         // Observe system appearance changes for Auto mode via distributed notification
         [[NSDistributedNotificationCenter defaultCenter]
@@ -104,9 +111,28 @@ static NSDictionary<NSString *, NSString *> *toolbarIconMapping(void) {
         case NppDarkModeDark:  _cachedIsDark = YES; break;
         case NppDarkModeAuto:
         default: {
-            NSAppearanceName name = [NSApp.effectiveAppearance
-                bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]];
-            _cachedIsDark = [name isEqualToString:NSAppearanceNameDarkAqua];
+            // Read the system's AppleInterfaceStyle global preference directly
+            // via CFPreferences instead of NSApp.effectiveAppearance.
+            //
+            // NSApp.effectiveAppearance is unreliable at first call from
+            // applicationDidFinishLaunching: — it returns Aqua (Light) until
+            // the first runloop tick has propagated the system appearance,
+            // even when the user has macOS in Dark mode. That made the very
+            // first read of statusBarBackground.CGColor bake the light value
+            // into the status bar / FindReplace / IncrementalSearch layers,
+            // and the bar stayed light for the whole session (the
+            // NPPDarkModeChangedNotification path that re-applies the CGColor
+            // only fires on explicit pref change). Toggling Prefs Light↔Dark
+            // and back masked the bug because by then NSApp was caught up.
+            //
+            // Reading the global "Apple Global Domain" pref directly is the
+            // canonical source of truth and is correct immediately at launch.
+            // Value is "Dark" when dark mode is enabled; missing / absent
+            // means Light.
+            CFPropertyListRef style = CFPreferencesCopyAppValue(
+                CFSTR("AppleInterfaceStyle"), kCFPreferencesAnyApplication);
+            NSString *styleStr = style ? (__bridge_transfer NSString *)style : nil;
+            _cachedIsDark = [styleStr isEqualToString:@"Dark"];
             break;
         }
     }
@@ -134,6 +160,58 @@ static NSDictionary<NSString *, NSString *> *toolbarIconMapping(void) {
 }
 
 - (BOOL)isDark { return _cachedIsDark; }
+
+// ── Appearance Profile (Classic / Tahoe) ──────────────────────────────────────
+
+- (void)setAppearanceStyle:(NppAppearanceStyle)style {
+    _appearanceStyle = style;
+    [[NSUserDefaults standardUserDefaults] setInteger:style forKey:kPrefAppearanceStyle];
+    // No notification posted yet: switching the profile requires rebuilding the
+    // toolbar (not just re-skinning colors), and that live-rebuild path is wired
+    // in a later step. For now the profile is read when the toolbar is built, so
+    // a change takes effect on the next launch.
+}
+
+- (NppAppearanceStyle)effectiveAppearanceStyle {
+    switch (_appearanceStyle) {
+        case NppAppearanceTahoe:   return NppAppearanceTahoe;
+        case NppAppearanceClassic: return NppAppearanceClassic;
+        case NppAppearanceAuto:
+        default:
+            // Auto resolves to Classic until the Tahoe profile exists. When it
+            // does, this becomes: `if (@available(macOS 26.0, *)) return Tahoe;`
+            return NppAppearanceClassic;
+    }
+}
+
+// ── Tahoe presentation scaffolding (inert under Classic) ──────────────────────
+
+- (BOOL)usesGlassMaterials {
+    return self.effectiveAppearanceStyle == NppAppearanceTahoe;
+}
+
+- (NSVisualEffectMaterial)materialForRole:(NppMaterialRole)role {
+    // Tahoe materials. Only consulted when usesGlassMaterials == YES; the values
+    // may be refined in Step 3b/3c once seen against real glass.
+    switch (role) {
+        case NppMaterialRoleToolbar:     return NSVisualEffectMaterialHeaderView;
+        case NppMaterialRoleSidebar:     return NSVisualEffectMaterialSidebar;
+        case NppMaterialRolePanelHeader: return NSVisualEffectMaterialTitlebar;  // lighter/sleeker than HeaderView
+        case NppMaterialRoleStatusBar:   return NSVisualEffectMaterialUnderWindowBackground;
+    }
+    return NSVisualEffectMaterialWindowBackground;
+}
+
+- (NppToolbarMetrics)toolbarMetrics {
+    if (self.effectiveAppearanceStyle == NppAppearanceTahoe) {
+        // Relaxed placeholder — tuned in Step 3c against real glass.
+        return (NppToolbarMetrics){ .iconSize = 18, .buttonSize = 34,
+                                    .buttonSpacing = 6, .groupGap = 12, .cornerRadius = 7 };
+    }
+    // Classic — mirrors nppIconSize/nppBtnSize/nppSpacing/nppSepGap/nppToolbarCornerR.
+    return (NppToolbarMetrics){ .iconSize = 16, .buttonSize = 28,
+                                .buttonSpacing = 4, .groupGap = 9, .cornerRadius = 4.5 };
+}
 
 // ── Tab Bar Colors ───────────────────────────────────────────────────────────
 
@@ -237,8 +315,18 @@ static NSDictionary<NSString *, NSString *> *toolbarIconMapping(void) {
 }
 
 - (NSColor *)statusBarBackground {
+    // Static RGB literals in both branches. The light branch previously
+    // returned [NSColor windowBackgroundColor] — a semantic dynamic color —
+    // and the callsites cache its .CGColor on a CALayer (status bar +
+    // FindReplacePanel + IncrementalSearchBar). CGColor resolution happens
+    // against the current drawing appearance, NOT against NSApp.appearance,
+    // so when macOS is in Dark mode but the user has chosen Light mode in
+    // Nextpad++, the dark variant of windowBackgroundColor was baked into
+    // the layer at view-creation time. Static RGB makes the resolution
+    // deterministic and matches the existing pattern in tabBarBackground.
+    // 0xECECEC ≈ stock macOS Aqua window chrome shade.
     return _cachedIsDark ? [NSColor colorWithWhite:0.18 alpha:1]
-                         : [NSColor windowBackgroundColor];
+                         : [NSColor colorWithRed:0xEC/255.0 green:0xEC/255.0 blue:0xEC/255.0 alpha:1];
 }
 
 // ── Icon Paths ───────────────────────────────────────────────────────────────

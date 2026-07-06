@@ -249,7 +249,13 @@ static NSString *normalizeForLookup(NSString *s) {
     NSString *key = normalizeForLookup(english);
     NSString *translated = self.translationMap[key];
     // Uncomment for debug: if (!translated) NSLog(@"[NppLocalizer] MISS: \"%@\"", english);
-    return translated ?: english;
+    // Fallback (no translation found) goes through stripAccelerators so
+    // Win32-style "&&" → "&" cleanup applies for English-only display too.
+    // Translated values are already pre-stripped during map building.
+    // Implicit contract for callers: use Win32-style "&&" for a literal
+    // ampersand; a lone "&" is treated as a Win32 mnemonic and dropped
+    // (matches how the translationMap lookup keys are normalized).
+    return translated ?: stripAccelerators(english);
 }
 
 - (NSString *)miscString:(NSString *)key {
@@ -301,7 +307,7 @@ static NSString *normalizeForLookup(NSString *s) {
     NSString *appSupport = [NSSearchPathForDirectoriesInDomains(
         NSApplicationSupportDirectory, NSUserDomainMask, YES) firstObject];
     NSString *dir = [appSupport stringByAppendingPathComponent:
-                     @"Notepad++/localization"];
+                     @"Nextpad++/localization"];
     [[NSFileManager defaultManager] createDirectoryAtPath:dir
                               withIntermediateDirectories:YES
                                                attributes:nil
@@ -504,7 +510,7 @@ static NSString *normalizeForLookup(NSString *s) {
         @"on selection":                   @"submenu:edit-onSelection",
         @"convert case to":                @"submenu:edit-convertCaseTo",
         @"line operations":                @"submenu:edit-lineOperations",
-        @"read-only in notepad++":         @"submenu:edit-readonlyInNotepad++",
+        @"read-only in notepad++":         @"submenu:edit-readonlyInNextpad++",
         @"insert":                         @"submenu:edit-insert",
         @"copy to clipboard":              @"submenu:edit-copyToClipboard",
         @"multi-select all":               @"submenu:edit-multiSelectALL",
@@ -624,6 +630,10 @@ static NSString *normalizeForLookup(NSString *s) {
         @"general":                        @"dlgattr:Preference_Global:title",
         @"new document":                   @"dlgattr:Preference_NewDoc:title",
         @"backup":                         @"dlgattr:Preference_Backup:title",
+        // macOS displays "Cloud and Link"; the Windows XML title is "Cloud & Link"
+        // (a single & is dropped as a mnemonic by normalizeForLookup, so the
+        // plain-English name never matches the harvested key — alias it here).
+        @"cloud and link":                 @"dlgattr:Preference_Cloud:title",
 
         // Window menu
         @"sort by":                        @"submenu:window-sortby",
@@ -718,6 +728,22 @@ static const char kOriginalSubmenuTitleKey = 0;
     // If no stored title and no translation: leave the title as-is (already English).
 }
 
++ (NSString *)englishTitleOfMenuItem:(NSMenuItem *)item {
+    if (!item) return @"";
+    NSString *stored = objc_getAssociatedObject(item, &kOriginalTitleKey);
+    return stored ?: (item.title ?: @"");
+}
+
++ (NSString *)englishTitleOfMenu:(NSMenu *)menu {
+    if (!menu) return @"";
+    NSString *stored = objc_getAssociatedObject(menu, &kOriginalSubmenuTitleKey);
+    return stored ?: (menu.title ?: @"");
+}
+
++ (NSString *)normalizedTitleKey:(NSString *)title {
+    return title.length ? normalizeForLookup(title) : @"";
+}
+
 // ---------------------------------------------------------------------------
 #pragma mark - Private: file lookup helpers
 // ---------------------------------------------------------------------------
@@ -726,11 +752,26 @@ static const char kOriginalSubmenuTitleKey = 0;
     // Check user directory first (allows overriding bundled files).
     NSString *userDir   = [NppLocalizer userLanguageDirectory];
     NSString *bundleDir = [NppLocalizer bundledLanguageDirectory];
+    NSFileManager *fm   = [NSFileManager defaultManager];
+
+    NSString *targetName = [stem stringByAppendingPathExtension:@"xml"];
 
     for (NSString *dir in @[userDir, bundleDir]) {
+        // Fast path: direct match. Works on case-insensitive volumes
+        // (the macOS default) regardless of how the file is actually cased.
         NSString *path = [[dir stringByAppendingPathComponent:stem]
                           stringByAppendingPathExtension:@"xml"];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) return path;
+        if ([fm fileExistsAtPath:path]) return path;
+
+        // Fallback: case-insensitive directory scan so that files with
+        // mixed-case names (e.g. chineseSimplified.xml) still load when
+        // the volume is case-sensitive APFS — see issue #23.
+        NSArray<NSString *> *entries = [fm contentsOfDirectoryAtPath:dir error:NULL];
+        for (NSString *entry in entries) {
+            if ([entry caseInsensitiveCompare:targetName] == NSOrderedSame) {
+                return [dir stringByAppendingPathComponent:entry];
+            }
+        }
     }
     return nil;
 }

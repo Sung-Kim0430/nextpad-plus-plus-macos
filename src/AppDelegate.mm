@@ -1,4 +1,5 @@
 #import "AppDelegate.h"
+#import "NppPaths.h"
 #import "NppApplication.h"
 #import "MainWindowController.h"
 #import "MenuBuilder.h"
@@ -10,6 +11,13 @@
 #import "UserDefineLangManager.h"
 #import "NppLangsManager.h"
 #import "EditorView.h"
+
+// Files opened from a folder beyond this count trigger a confirmation.
+static const NSUInteger kFolderOpenConfirmThreshold = 20;
+
+@interface AppDelegate ()
+- (NSArray<NSString *> *)_expandFolderArguments:(NSArray<NSString *> *)paths;
+@end
 
 @implementation AppDelegate {
     NSMutableArray<NSString *> *_pendingFilePaths;
@@ -28,6 +36,13 @@
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     // Disable the macOS press-and-hold accent picker so key repeat works in the editor.
     [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"ApplePressAndHoldEnabled"];
+
+    // Issue #126 — wire the "Open with Nextpad++" Finder service. The NSServices
+    // entry in Info.plist declares the menu item; this registers the object that
+    // receives the file URLs. NSUpdateDynamicServices() nudges the system to pick
+    // it up promptly (notably right after a fresh install).
+    [NSApp setServicesProvider:self];
+    NSUpdateDynamicServices();
 
     // Load config.xml preferences before building UI (applies saved XML → NSUserDefaults)
     readConfigXML();
@@ -122,7 +137,7 @@
 
     // Title bar addition (-titleAdd)
     if (cli.titleAdd.length) {
-        NSString *base = self.mainWindowController.window.title ?: @"Notepad++";
+        NSString *base = self.mainWindowController.window.title ?: @"Nextpad++";
         self.mainWindowController.window.title = [NSString stringWithFormat:@"%@ - %@", base, cli.titleAdd];
     }
 
@@ -142,7 +157,11 @@
     } else if (cli.filePaths.count > 0) {
         [self _openFilesFromCLI:cli inController:self.mainWindowController];
         hasContent = YES;
-    } else if (!cli.noSession) {
+    } else if (!cli.noSession &&
+               [[NSUserDefaults standardUserDefaults] boolForKey:kPrefRememberSession]) {
+        // Issue #87 — Preferences > Backup > "Remember current session for next launch"
+        // mirrors the Windows NPP RememberLastSession option. Off → start with a clean
+        // editor on each launch. -nosession CLI flag still overrides per-invocation.
         hasContent = [self.mainWindowController restoreLastSession];
     }
     // If nothing was opened, create an empty tab (first launch or -nosession with no files)
@@ -152,6 +171,17 @@
         [self.mainWindowController performSelector:@selector(newDocument:) withObject:nil];
         #pragma clang diagnostic pop
     }
+
+    // Re-open side panels that were open last quit (issue #132). Primary
+    // window only — secondary windows from Window > New Window must not
+    // inherit the restore. Deferred onto the main queue so it runs AFTER
+    // the side-panel collapse block that buildContentView enqueues during
+    // -init: that block was enqueued first, so FIFO ordering guarantees
+    // the collapse runs before this restore. Calling restore synchronously
+    // here would let the later-running collapse re-hide the panels.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self.mainWindowController restoreSidePanels];
+    });
 
     // ── Plugins ─────────────────────────────────────────────────────────
 
@@ -188,10 +218,10 @@
         NSTimeInterval elapsed = -[self.launchStart timeIntervalSinceNow];
         NSString *msg = [NSString stringWithFormat:@"Loading time: %.2f seconds", elapsed];
         NSAlert *a = [[NSAlert alloc] init];
-        a.messageText = [[NppLocalizer shared] translate:@"Notepad++ Loading Time"];
+        a.messageText = [[NppLocalizer shared] translate:@"Nextpad++ Loading Time"];
         a.informativeText = msg;
         a.icon = [[NSImage alloc] initWithContentsOfFile:
-            [NSHomeDirectory() stringByAppendingPathComponent:@".notepad++/plugins/Config/logo100px.png"]];
+            NppConfigSubpath(@"plugins/Config/logo100px.png")];
         [a runModal];
     }
 
@@ -220,11 +250,34 @@
     // ── Mark launch complete and process any pending file-open requests ────
     _didFinishLaunching = YES;
     if (_pendingFilePaths.count > 0) {
-        for (NSString *path in _pendingFilePaths) {
+        NSArray<NSString *> *files = [self _expandFolderArguments:_pendingFilePaths];
+        [_pendingFilePaths removeAllObjects];
+        for (NSString *path in files) {
             [self.mainWindowController openFileAtPath:path];
         }
-        [_pendingFilePaths removeAllObjects];
+        // Files queued during launch mean the user explicitly asked us to
+        // open something. NSApplication usually foregrounds a launching
+        // app naturally, but state restoration can leave the window
+        // miniaturized — call the helper so the freshly-loaded files are
+        // actually visible (issue #63).
+        if (files.count > 0) [self.mainWindowController bringWindowForward];
     }
+
+    // ── Initial keyboard focus to the active editor (issue #34) ─────────
+    // Without this, the user's first keystrokes after relaunch go nowhere
+    // and VoiceOver announces a splitter instead of the editor. The fix
+    // has two parts: (1) target SCIContentView via .content, not the
+    // ScintillaView NSView wrapper — ScintillaView itself is not in the
+    // editor's keyDown: chain, so making it first responder leaves typing
+    // dead until the user clicks inside the editor; (2) defer the call
+    // to the next runloop tick so it runs after AppKit has finished
+    // settling the freshly-shown window's first responder.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        EditorView *ed = [self.mainWindowController currentEditor];
+        if (ed.scintillaView.content) {
+            [self.mainWindowController.window makeFirstResponder:ed.scintillaView.content];
+        }
+    });
 
     // ── Background update check (non-blocking, after 5 second delay) ────
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
@@ -246,15 +299,73 @@
 
     [mwc showWindow:nil];
 
-    // Observe close to remove from our array
-    [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowWillCloseNotification
-                                                      object:mwc.window
-                                                       queue:nil
-                                                  usingBlock:^(NSNotification *note) {
+    // Observe close to remove from our array. Keep the returned token and
+    // remove the observer when it fires — otherwise the notification center
+    // retains the block (which strongly captures mwc) for the app's lifetime,
+    // leaking every opened-and-closed secondary window's controller and its
+    // whole object graph.
+    __block id closeToken =
+        [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowWillCloseNotification
+                                                          object:mwc.window
+                                                           queue:nil
+                                                      usingBlock:^(NSNotification *note) {
         [self.windowControllers removeObject:mwc];
+        [[NSNotificationCenter defaultCenter] removeObserver:closeToken];
+        // Also drop the __block storage's strong ref to the token, otherwise
+        // token -> block -> __block storage -> token stays a retained island
+        // (which captures mwc) even after the center deregisters it. The center
+        // retains the block across this in-flight post, so it is safe to release
+        // our last ref here. (Bug B leak fix.)
+        closeToken = nil;
     }];
 
     return mwc;
+}
+
+// ── Folder argument expansion ────────────────────────────────────────────────
+
+// Expands any directory in `paths` to its TOP-LEVEL regular files. There
+// is no recursion: subdirectories and hidden entries (dotfiles) are
+// skipped. Plain file paths — and non-existent paths — pass through
+// unchanged so the opener keeps its existing behaviour. If expanding a
+// folder pushes the total file count past kFolderOpenConfirmThreshold the
+// user is asked once; returns nil if they decline.
+- (NSArray<NSString *> *)_expandFolderArguments:(NSArray<NSString *> *)paths {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *result = [NSMutableArray array];
+    BOOL anyFolderExpanded = NO;
+
+    for (NSString *path in paths) {
+        BOOL isDir = NO;
+        if (![fm fileExistsAtPath:path isDirectory:&isDir] || !isDir) {
+            [result addObject:path];
+            continue;
+        }
+        anyFolderExpanded = YES;
+        NSArray<NSString *> *entries =
+            [[fm contentsOfDirectoryAtPath:path error:nil]
+                sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
+        for (NSString *name in entries) {
+            if ([name hasPrefix:@"."]) continue;            // skip hidden
+            NSString *full = [path stringByAppendingPathComponent:name];
+            BOOL childIsDir = NO;
+            [fm fileExistsAtPath:full isDirectory:&childIsDir];
+            if (childIsDir) continue;                       // skip subfolders
+            [result addObject:full];
+        }
+    }
+
+    if (anyFolderExpanded && result.count > kFolderOpenConfirmThreshold) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = [[NppLocalizer shared] translate:@"Open all files in folder?"];
+        alert.informativeText = [NSString stringWithFormat:
+            [[NppLocalizer shared] translate:@"This will open %lu files in new tabs."],
+            (unsigned long)result.count];
+        [alert addButtonWithTitle:[[NppLocalizer shared] translate:@"Open"]];
+        [alert addButtonWithTitle:[[NppLocalizer shared] translate:@"Cancel"]];
+        if ([alert runModal] != NSAlertFirstButtonReturn) return nil;
+    }
+    return result;
 }
 
 // ── Open files from CLI ─────────────────────────────────────────────────────
@@ -285,6 +396,18 @@
                     [mwc openFileAtPath:fullPath];
                     lastEditor = [mwc currentEditor];
                 }
+            }
+            continue;
+        }
+
+        if (isDir) {
+            // Bare folder (no -r / -openFoldersAsWorkspace): open its
+            // top-level files — same behaviour as a folder handed to an
+            // already-running instance (issue #131).
+            NSArray<NSString *> *folderFiles = [self _expandFolderArguments:@[path]];
+            for (NSString *folderFile in folderFiles) {
+                [mwc openFileAtPath:folderFile];
+                lastEditor = [mwc currentEditor];
             }
             continue;
         }
@@ -347,8 +470,18 @@
         [_pendingFilePaths addObject:filename];
         return YES;
     }
+    // A folder argument expands to its top-level files (issue #131).
+    NSArray<NSString *> *files = [self _expandFolderArguments:@[filename]];
+    if (files.count == 0) return YES;  // empty folder, or large-open declined
     MainWindowController *mwc = [self _activeWindowController];
-    [mwc openFileAtPath:filename];
+    for (NSString *path in files) {
+        [mwc openFileAtPath:path];
+    }
+    // Issue #63: surface the window to the user. Without this, opening a
+    // file from Finder while the app is minimized silently adds the file
+    // to a tab inside an invisible window and the user has to hunt for
+    // the Dock icon to see it.
+    [mwc bringWindowForward];
     return YES;
 }
 
@@ -358,11 +491,57 @@
         [sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
         return;
     }
-    MainWindowController *mwc = [self _activeWindowController];
-    for (NSString *path in filenames) {
-        [mwc openFileAtPath:path];
+    // Folder arguments expand to their top-level files (issue #131).
+    NSArray<NSString *> *files = [self _expandFolderArguments:filenames];
+    if (files.count > 0) {
+        MainWindowController *mwc = [self _activeWindowController];
+        for (NSString *path in files) {
+            [mwc openFileAtPath:path];
+        }
+        // Issue #63: bring the window forward AFTER all files are added so
+        // there's no flicker between batches and the front-most tab is the
+        // last one opened (the standard macOS behaviour for multi-file open).
+        [mwc bringWindowForward];
     }
     [sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
+}
+
+/// Issue #126 — "Open with Nextpad++" Finder service handler. Declared via
+/// NSServices in Info.plist (NSMessage=openFilesService). Finder places the
+/// selected items on the pasteboard as file URLs; we route them through the
+/// same open path as Apple-event opens (folder expansion + window surfacing),
+/// so files and folders behave identically to a Finder double-click / drag.
+- (void)openFilesService:(NSPasteboard *)pboard
+                userData:(NSString *)userData
+                   error:(NSString **)error {
+    NSArray *objs = [pboard readObjectsForClasses:@[[NSURL class]]
+                                          options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSURL *url in objs) {
+        if (url.isFileURL && url.path.length) [paths addObject:url.path];
+    }
+    // Fallback: a sender that only supplied a plain string path.
+    if (paths.count == 0) {
+        NSString *s = [pboard stringForType:NSPasteboardTypeString];
+        if (s.length) [paths addObject:s];
+    }
+    if (paths.count == 0) return;
+
+    // Service can cold-start the app: queue until launch completes, where
+    // applicationDidFinishLaunching drains _pendingFilePaths (with folder
+    // expansion) and surfaces the window.
+    if (!_didFinishLaunching) {
+        [_pendingFilePaths addObjectsFromArray:paths];
+        return;
+    }
+
+    NSArray<NSString *> *files = [self _expandFolderArguments:paths];
+    if (files.count == 0) return;  // empty folder, or large-open declined
+    MainWindowController *mwc = [self _activeWindowController];
+    for (NSString *path in files) {
+        [mwc openFileAtPath:path];
+    }
+    [mwc bringWindowForward];  // activates Nextpad++ over Finder
 }
 
 /// Returns the window controller for the key window, or mainWindowController as fallback.
@@ -378,7 +557,7 @@
 
 /// Load shortcut overrides from shortcuts.xml <InternalCommands> and apply to live menu items.
 - (void)_loadShortcutOverrides {
-    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@".notepad++/shortcuts.xml"];
+    NSString *path = NppConfigSubpath(@"shortcuts.xml");
     NSData *data = [NSData dataWithContentsOfFile:path];
     if (!data) {
         NSLog(@"[Shortcuts] No shortcuts.xml found at %@ — skipping overrides", path);
@@ -440,15 +619,18 @@
     }
 
     // ── PluginCommands ──
-    for (NSXMLElement *pc in [doc nodesForXPath:@"//PluginCommands/PluginCommand" error:nil]) {
-        NSString *pluginName = [[pc attributeForName:@"moduleName"] stringValue];
-        NSInteger internalID = [[[pc attributeForName:@"internalID"] stringValue] integerValue];
-        // Find the plugin menu item by walking Plugins menu
-        NSMenu *mainMenu = [NSApp mainMenu];
-        for (NSMenuItem *topItem in mainMenu.itemArray) {
-            NSString *menuTitle = topItem.submenu.title ?: topItem.title;
-            if (![menuTitle isEqualToString:@"Plugins"]) continue;
-            for (NSMenuItem *pluginItem in topItem.submenu.itemArray) {
+    // Look up the Plugins / Macro / Run top-level menus by tag rather than
+    // English title — when the user runs in a non-English locale the menu
+    // titles are translated by NppLocalizer (e.g. "Плагины", "Макрос",
+    // "Запустить"), and an isEqualToString:@"Plugins" check would silently
+    // skip the entire shortcut-override pass. Tags are assigned in
+    // MenuBuilder at build time and survive translation.
+    NSMenu *pluginsMenu = [[[NSApp mainMenu] itemWithTag:kMenuTagPlugins] submenu];
+    if (pluginsMenu) {
+        for (NSXMLElement *pc in [doc nodesForXPath:@"//PluginCommands/PluginCommand" error:nil]) {
+            NSString *pluginName = [[pc attributeForName:@"moduleName"] stringValue];
+            NSInteger internalID = [[[pc attributeForName:@"internalID"] stringValue] integerValue];
+            for (NSMenuItem *pluginItem in pluginsMenu.itemArray) {
                 if (![pluginItem.title isEqualToString:pluginName]) continue;
                 if (!pluginItem.submenu) continue;
                 NSInteger cmdIdx = 0;
@@ -462,49 +644,41 @@
                     cmdIdx++;
                 }
             }
-            break;
+            nextPlugin:;
         }
-        nextPlugin:;
     }
 
     // ── Macro shortcuts ──
-    for (NSXMLElement *mc in [doc nodesForXPath:@"//Macros/Macro" error:nil]) {
-        NSString *macroName = [[mc attributeForName:@"name"] stringValue];
-        NSUInteger keyCode = [[[mc attributeForName:@"Key"] stringValue] integerValue];
-        if (keyCode == 0) continue;
-        // Find macro menu item by title
-        NSMenu *mainMenu = [NSApp mainMenu];
-        for (NSMenuItem *topItem in mainMenu.itemArray) {
-            NSString *menuTitle = topItem.submenu.title ?: topItem.title;
-            if (![menuTitle isEqualToString:@"Macro"]) continue;
-            for (NSMenuItem *mi in topItem.submenu.itemArray) {
+    NSMenu *macroMenu = [[[NSApp mainMenu] itemWithTag:kMenuTagMacro] submenu];
+    if (macroMenu) {
+        for (NSXMLElement *mc in [doc nodesForXPath:@"//Macros/Macro" error:nil]) {
+            NSString *macroName = [[mc attributeForName:@"name"] stringValue];
+            NSUInteger keyCode = [[[mc attributeForName:@"Key"] stringValue] integerValue];
+            if (keyCode == 0) continue;
+            for (NSMenuItem *mi in macroMenu.itemArray) {
                 if ([mi.title isEqualToString:macroName]) {
                     applyOverride(mc, mi);
                     totalApplied++;
                     break;
                 }
             }
-            break;
         }
     }
 
     // ── Run Commands (UserDefinedCommands) ──
-    for (NSXMLElement *rc in [doc nodesForXPath:@"//UserDefinedCommands/Command" error:nil]) {
-        NSString *cmdName = [[rc attributeForName:@"name"] stringValue];
-        NSUInteger keyCode = [[[rc attributeForName:@"Key"] stringValue] integerValue];
-        if (keyCode == 0 || !cmdName.length) continue;
-        NSMenu *mainMenu = [NSApp mainMenu];
-        for (NSMenuItem *topItem in mainMenu.itemArray) {
-            NSString *menuTitle = topItem.submenu.title ?: topItem.title;
-            if (![menuTitle isEqualToString:@"Run"]) continue;
-            for (NSMenuItem *mi in topItem.submenu.itemArray) {
+    NSMenu *runMenu = [[[NSApp mainMenu] itemWithTag:kMenuTagRun] submenu];
+    if (runMenu) {
+        for (NSXMLElement *rc in [doc nodesForXPath:@"//UserDefinedCommands/Command" error:nil]) {
+            NSString *cmdName = [[rc attributeForName:@"name"] stringValue];
+            NSUInteger keyCode = [[[rc attributeForName:@"Key"] stringValue] integerValue];
+            if (keyCode == 0 || !cmdName.length) continue;
+            for (NSMenuItem *mi in runMenu.itemArray) {
                 if ([mi.title isEqualToString:cmdName]) {
                     applyOverride(rc, mi);
                     totalApplied++;
                     break;
                 }
             }
-            break;
         }
     }
 
@@ -546,7 +720,7 @@
     if ([panel runModal] != NSModalResponseOK) return;
 
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *themesDir = [NSHomeDirectory() stringByAppendingPathComponent:@".notepad++/themes"];
+    NSString *themesDir = NppConfigSubpath(@"themes");
     [fm createDirectoryAtPath:themesDir withIntermediateDirectories:YES attributes:nil error:nil];
 
     NSInteger imported = 0;
@@ -576,7 +750,7 @@
 #endif
 
     NSAlert *about = [[NSAlert alloc] init];
-    about.messageText = [NSString stringWithFormat:@"Notepad++ macOS v%@     (%@)", version, archStr];
+    about.messageText = [NSString stringWithFormat:@"Nextpad++ macOS v%@     (%@)", version, archStr];
 
     NSString *license =
         @"GNU General Public Licence\n\n"
@@ -594,12 +768,12 @@
 
     about.informativeText = [NSString stringWithFormat:
         @"Build time: %s - %s\n\n"
-        @"Home: https://notepad-plus-plus-mac.org\n\n"
+        @"Home: https://nextpad.org\n\n"
         @"%@", __DATE__, __TIME__, license];
 
     // Use our logo
     NSImage *logo = [[NSImage alloc] initWithContentsOfFile:
-        [NSHomeDirectory() stringByAppendingPathComponent:@".notepad++/plugins/Config/logo100px.png"]];
+        NppConfigSubpath(@"plugins/Config/logo100px.png")];
     if (!logo) {
         // Fallback: try bundle resource
         NSString *logoPath = [[NSBundle mainBundle] pathForResource:@"logo100px" ofType:@"png"
@@ -614,7 +788,7 @@
 
 // ── Update check (GitHub Releases API) ──────────────────────────────────────
 
-static NSString *const kGitHubReleasesAPI = @"https://api.github.com/repos/notepad-plus-plus-mac/notepad-plus-plus-macos/releases/latest";
+static NSString *const kGitHubReleasesAPI = @"https://api.github.com/repos/nextpad-plus-plus/nextpad-plus-plus-macos/releases/latest";
 static NSString *const kUpdateMenuItemTag = @"checkForUpdatesMenuItem";
 
 /// Find the "Check for Updates..." menu item in the app menu.
@@ -710,7 +884,7 @@ u                // Up to date — leave the menu item plain (no badge / icon).
                     NSAlert *a = [[NSAlert alloc] init];
                     a.messageText = [loc translate:@"You're Up to Date"];
                     a.informativeText = [NSString stringWithFormat:
-                        @"Notepad++ %@ %@", currentVersion, [loc translate:@"is the latest version."]];
+                        @"Nextpad++ %@ %@", currentVersion, [loc translate:@"is the latest version."]];
                     [a runModal];
                 }
             }
@@ -727,7 +901,7 @@ u                // Up to date — leave the menu item plain (no badge / icon).
 
     NppLocalizer *loc = [NppLocalizer shared];
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = [NSString stringWithFormat:@"Notepad++ v%@ %@", version, [loc translate:@"is Available"]];
+    alert.messageText = [NSString stringWithFormat:@"Nextpad++ v%@ %@", version, [loc translate:@"is Available"]];
     alert.informativeText = [NSString stringWithFormat:
         @"%@ v%@.\n\n%@",
         [loc translate:@"You are currently running"],

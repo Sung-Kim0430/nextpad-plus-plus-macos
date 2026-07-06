@@ -1,11 +1,14 @@
 #import "NppPluginManager.h"
+#import "NppPaths.h"
 #import "MainWindowController.h"
+#import "MenuBuilder.h"        // kMenuTagPlugins
 #import "PreferencesWindowController.h"
 #import "TabManager.h"
 #import "EditorView.h"
 #import "ScintillaView.h"
 
 #include <dlfcn.h>
+#include <malloc/malloc.h>
 #include <string>
 #include <vector>
 #include <memory>
@@ -14,6 +17,14 @@
 #include "NppPluginInterfaceMac.h"
 
 NSNotificationName const NppPluginsDidLoadNotification = @"NppPluginsDidLoadNotification";
+
+// saveSessionToPath: is implemented in MainWindowController.mm but lives outside
+// its public header (loadSessionFromPath: IS in the header). Declare it locally
+// so the NPPM_SAVECURRENTSESSION handler below can call it without a header
+// change. Symmetric to the existing public loadSessionFromPath: API.
+@interface MainWindowController (NppPluginManagerPrivate)
+- (void)saveSessionToPath:(NSString *)path;
+@end
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ID Allocator — hands out non-overlapping integer ranges
@@ -180,7 +191,30 @@ static const uintptr_t kHandleScintillaSub   = 0x5343490B;  // "SCI\v"
 // ── Plugin directory ────────────────────────────────────────────────────
 
 static NSString *pluginBaseDir(void) {
-    return [NSHomeDirectory() stringByAppendingPathComponent:@".notepad++/plugins"];
+    return NppConfigSubpath(@"plugins");
+}
+
+// All editors across primary + secondary (V + H split) tab managers, in
+// primary-first order. Used by the open-file enumeration messages
+// (NPPM_GETNBOPENFILES / NPPM_GETOPENFILENAMES) and NPPM_GETPOSFROMBUFFERID.
+// `filter`: 0 = all views, 1 = primary only, 2 = secondary only — matches the
+// Windows NPP lParam convention for NPPM_GETNBOPENFILES. KVC for the sub
+// tab-manager ivars follows the same access pattern this file already uses
+// elsewhere (e.g. _pluginToolbarItems at NPPM_ADDTOOLBARICON handling).
+static NSArray<EditorView *> *nppAllEditors(MainWindowController *mwc, int filter) {
+    NSMutableArray<EditorView *> *out = [NSMutableArray array];
+    if (!mwc) return out;
+    if (filter == 0 || filter == 1) {
+        TabManager *p = [mwc valueForKey:@"_tabManager"];
+        if (p) [out addObjectsFromArray:p.allEditors];
+    }
+    if (filter == 0 || filter == 2) {
+        for (NSString *key in @[@"_subTabManagerV", @"_subTabManagerH"]) {
+            TabManager *s = [mwc valueForKey:key];
+            if (s) [out addObjectsFromArray:s.allEditors];
+        }
+    }
+    return out;
 }
 
 // ── Loading ─────────────────────────────────────────────────────────────
@@ -662,9 +696,25 @@ static intptr_t _npp_run_on_main(intptr_t (^block)(void)) {
         }
 
         case NPPM_GETFULLPATHFROMBUFFERID: {
-            // wParam = bufferID (EditorView*), lParam = char* buffer to fill
-            EditorView *ed = (__bridge EditorView *)(void *)wParam;
+            // wParam = bufferID (EditorView*), lParam = char* buffer to fill (≥ 1024).
+            //
+            // Crash-safe on bogus wParam: must NOT trigger ARC retain. Storing
+            // the __bridge cast result in a __strong local would call
+            // objc_retain on whatever wParam happens to be — a plugin that
+            // cached a now-freed bufferID would crash the host. Walk the
+            // host's own editor list and only adopt the pointer once it's
+            // verified to be one of ours. Mirrors NPPM_GETPOSFROMBUFFERID below.
+            MainWindowController *mwc = _mwc;
+            void *target = (void *)wParam;
             char *buf = (char *)lParam;
+            if (!mwc || !target) {
+                if (buf) buf[0] = '\0';
+                return 0;
+            }
+            EditorView *ed = nil;
+            for (EditorView *cand in nppAllEditors(mwc, 0)) {
+                if ((__bridge void *)cand == target) { ed = cand; break; }
+            }
             if (ed && ed.filePath && buf) {
                 strlcpy(buf, ed.filePath.UTF8String, 1024);
                 return (intptr_t)strlen(buf);
@@ -907,15 +957,98 @@ static intptr_t _npp_run_on_main(intptr_t (^block)(void)) {
         }
 
         case NPPM_GETNBOPENFILES: {
+            // wParam unused, lParam: 0=ALL, 1=PRIMARY_VIEW, 2=SECOND_VIEW (Windows NPP convention).
             MainWindowController *mwc = _mwc;
             if (!mwc) return 0;
-            // wParam unused, lParam: 0=all, 1=primary, 2=secondary
-            // For now just count primary tabs
-            EditorView *ed = [mwc currentEditor];
-            (void)ed;
-            // We need access to allEditors — for now return a simple count
-            // TODO: access tab managers properly
+            return (intptr_t)nppAllEditors(mwc, (int)lParam).count;
+        }
+
+        case NPPM_GETOPENFILENAMES: {
+            // Windows contract: INT NPPM_GETOPENFILENAMES(TCHAR **fileNames, INT nbFile)
+            // wParam = char **files — caller-allocated array of nbFile slots,
+            //                          each slot ≥ MAX_PATH (1024) bytes.
+            // lParam = int nbFile — number of slots available.
+            // Fills slots with UTF-8 paths of open buffers across ALL views,
+            // skipping untitled tabs (no filePath) — matches the convention used
+            // by the host's own saveSessionToPath:. Returns the actual count
+            // written. Plugin should call NPPM_GETNBOPENFILES first to size.
+            char **files = (char **)wParam;
+            int maxN = (int)lParam;
+            MainWindowController *mwc = _mwc;
+            if (!mwc || !files || maxN <= 0) return 0;
+            NSArray<EditorView *> *all = nppAllEditors(mwc, 0);
+            int n = 0;
+            for (EditorView *ed in all) {
+                if (n >= maxN) break;
+                if (!ed.filePath) continue;             // skip untitled
+                if (!files[n]) continue;                // defensive: caller didn't allocate this slot
+                strlcpy(files[n], ed.filePath.UTF8String, 1024);
+                n++;
+            }
+            return (intptr_t)n;
+        }
+
+        case NPPM_SAVECURRENTSESSION: {
+            // wParam unused, lParam = const char *path (UTF-8). Writes the host's
+            // own session format (plist with tabs / firstVisibleLine / cursorLine
+            // / selectedIndex) by reusing -[MainWindowController saveSessionToPath:],
+            // the same method backing File ▸ Save Session As… and the --sessionFile
+            // CLI restore path. Returns 1 on success (synchronous), 0 on invalid input.
+            const char *path = (const char *)lParam;
+            MainWindowController *mwc = _mwc;
+            if (!path || !mwc) return 0;
+            NSString *p = [NSString stringWithUTF8String:path];
+            if (!p) return 0;
+            [mwc saveSessionToPath:p];
             return 1;
+        }
+
+        case NPPM_LOADSESSION: {
+            // wParam unused, lParam = const char *path (UTF-8). Replaces current
+            // tabs with the saved set by reusing -[MainWindowController loadSessionFromPath:],
+            // the same method backing File ▸ Load Session… and --sessionFile. The file
+            // must already exist; returns 0 if missing (so a plugin can distinguish
+            // "no session yet" from "session loaded"). Returns 1 on success.
+            const char *path = (const char *)lParam;
+            MainWindowController *mwc = _mwc;
+            if (!path || !mwc) return 0;
+            NSString *p = [NSString stringWithUTF8String:path];
+            if (!p || ![[NSFileManager defaultManager] fileExistsAtPath:p]) return 0;
+            [mwc loadSessionFromPath:p];
+            return 1;
+        }
+
+        case NPPM_GETPOSFROMBUFFERID: {
+            // Windows contract: INT NPPM_GETPOSFROMBUFFERID(UINT_PTR bufferID, INT priorityView)
+            // Returns the buffer's (view | tab-index) packed into one int:
+            //   top 2 bits  = view (MAIN_VIEW=0, SUB_VIEW=1)
+            //   low 30 bits = 0-based tab index within that view
+            // -1 if the bufferID isn't found in any view. `priorityView` (0/1)
+            // controls which view is searched first.
+            //
+            // Crash-safe on bogus wParam: must NOT trigger ARC retain. Storing
+            // the bridge-cast result in a __strong local would call objc_retain
+            // on whatever wParam happens to be (crash on garbage). Use the raw
+            // void* throughout and compare by pointer identity — no ObjC method
+            // is ever sent to the candidate `target` pointer.
+            MainWindowController *mwc = _mwc;
+            void *target = (void *)wParam;
+            if (!mwc || !target) return -1;
+            int priority = ((int)lParam == 1) ? 1 : 0;
+            int viewOrder[2] = { priority, 1 - priority };
+            for (int i = 0; i < 2; ++i) {
+                int v = viewOrder[i];
+                // primary == view 0; combined V+H secondary == view 1.
+                NSArray<EditorView *> *eds = nppAllEditors(mwc, v == 0 ? 1 : 2);
+                NSUInteger idx = 0;
+                for (EditorView *ed in eds) {
+                    if ((__bridge void *)ed == target) {
+                        return ((intptr_t)(v & 0x3) << 30) | ((intptr_t)idx & 0x3FFFFFFF);
+                    }
+                    idx++;
+                }
+            }
+            return -1;
         }
 
         case NPPM_GETNPPVERSION: {
@@ -951,7 +1084,7 @@ static intptr_t _npp_run_on_main(intptr_t (^block)(void)) {
         case NPPM_GETNPPSETTINGSDIRPATH: {
             char *buf = (char *)lParam;
             if (buf) {
-                NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@".notepad++"];
+                NSString *path = NppConfigDir();
                 strlcpy(buf, path.UTF8String, 1024);
                 return (intptr_t)strlen(buf);
             }
@@ -1070,6 +1203,7 @@ static intptr_t _npp_run_on_main(intptr_t (^block)(void)) {
                 case 41002: action = @selector(openDocument:);   break; // IDM_FILE_OPEN
                 case 41006: action = @selector(saveDocument:);   break; // IDM_FILE_SAVE
                 case 41003: action = @selector(closeCurrentTab:); break; // IDM_FILE_CLOSE
+                case 41004: action = @selector(closeAllTabs:);   break; // IDM_FILE_CLOSEALL — used by SessionMgr to swap sessions
                 default:
                     NSLog(@"[Plugins] Unhandled NPPM_MENUCOMMAND IDM=%d", idm);
                     return 0;
@@ -1310,9 +1444,22 @@ static intptr_t _npp_run_on_main(intptr_t (^block)(void)) {
         }
 
         // ── macOS-specific: plugin panel docking ──────────────────────
-        case NPPM_DMM_REGISTERPANEL:
-            return (intptr_t)[self registerPluginPanel:(__bridge NSView *)(void *)wParam
+        case NPPM_DMM_REGISTERPANEL: {
+            // Plugin hands in an NSView for host retention. We MUST NOT pass
+            // raw wParam to an ObjC method without validation — the ARC retain
+            // inserted at the call boundary (registerPluginPanel: takes a
+            // __strong NSView*) dereferences the pointer inside objc_retain.
+            // A garbage value like 0xDEADBEEF segfaults the host before our
+            // method body runs. There's no master list to validate against
+            // here (unlike the bufferID handlers), so use malloc_zone_from_ptr
+            // as a cheap "is this a live heap allocation" guard — NSView
+            // instances are always malloc-allocated; garbage or stale 32-bit
+            // sentinels are not. Reject anything that's clearly not.
+            void *target = (void *)wParam;
+            if (!target || !malloc_zone_from_ptr(target)) return 0;
+            return (intptr_t)[self registerPluginPanel:(__bridge NSView *)target
                                                  title:(const char *)lParam];
+        }
         case NPPM_DMM_SHOWPANEL:
             return [self showPluginPanelWithHandle:(uint64_t)wParam];
         case NPPM_DMM_HIDEPANEL:
@@ -1369,13 +1516,11 @@ static intptr_t _npp_run_on_main(intptr_t (^block)(void)) {
 // ── Menu helpers ────────────────────────────────────────────────────────
 
 - (nullable NSMenu *)findPluginsMenu {
-    NSMenu *mainMenu = [NSApp mainMenu];
-    for (NSMenuItem *item in mainMenu.itemArray) {
-        if ([item.title isEqualToString:@"Plugins"] ||
-            [item.submenu.title isEqualToString:@"Plugins"])
-            return item.submenu;
-    }
-    return nil;
+    // Tag-based lookup is required because the menu's English title is
+    // overwritten with the active language's translation (e.g. "Плагины")
+    // before any plugin command registration runs, so a title-based scan
+    // would silently fail and the plugin's commands would never appear.
+    return [[[NSApp mainMenu] itemWithTag:kMenuTagPlugins] submenu];
 }
 
 - (nullable NSMenuItem *)findMenuItemWithTag:(int)tag inMenu:(NSMenu *)menu {

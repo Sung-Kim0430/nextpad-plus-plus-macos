@@ -58,6 +58,13 @@ struct _SRLineInfo {
     if (self) {
         [self _buildUI];
         [self _applyTheme];
+        // Tahoe: rounded-card corners to match the editor / side panels. Gated —
+        // Classic stays square.
+        if ([NppThemeManager shared].usesGlassMaterials) {
+            self.wantsLayer = YES;
+            self.layer.cornerRadius  = 8.0;
+            self.layer.masksToBounds = YES;
+        }
         _markingsStruct._length   = 0;
         _markingsStruct._markings = nullptr;
         _wordWrapEnabled = [[NSUserDefaults standardUserDefaults] boolForKey:@"SearchResultsWordWrap"];
@@ -325,6 +332,8 @@ static sptr_t _srSciColor(NSColor *c) {
 - (void)_applyTheme {
     BOOL dark = [NppThemeManager shared].isDark;
     NPPStyleStore *store = [NPPStyleStore sharedStore];
+    NSAppearance *panelAppearance = [NSAppearance appearanceNamed:
+        dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
 
     // Background & foreground from editor theme
     NSColor *bgColor = [store globalBg];
@@ -393,13 +402,19 @@ static sptr_t _srSciColor(NSColor *c) {
     }
 
     // ── Title bar and filter bar background ─────────────────────────────
-    NSColor *panelBg = [NppThemeManager shared].panelBackground;
+    // Use a concrete color here, not a dynamic NSColor bridged to CGColor:
+    // layer colors are resolved at assignment time and can otherwise pick up
+    // the system appearance instead of Nextpad++'s forced light/dark mode.
+    NSColor *panelBg = [NppThemeManager shared].statusBarBackground;
     _titleBar.layer.backgroundColor = panelBg.CGColor;
     _filterBar.layer.backgroundColor = panelBg.CGColor;
+    self.appearance = panelAppearance;
+    _titleBar.appearance = panelAppearance;
+    _filterBar.appearance = panelAppearance;
+    _filterField.appearance = panelAppearance;
 
     // ── Appearance for dark/light disclosure triangles ────────────────────
-    _sci.appearance = [NSAppearance appearanceNamed:
-        dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
+    _sci.appearance = panelAppearance;
 
     // Re-colourise if we have content
     if ([_sci message:SCI_GETLENGTH] > 0)
@@ -476,16 +491,40 @@ static sptr_t _srSciColor(NSColor *c) {
     if (optLabel.length) suffix = [NSString stringWithFormat:@" [%@: %@]", modeLabel, optLabel];
     else suffix = [NSString stringWithFormat:@" [%@]", modeLabel];
 
+    // Timestamp (date + time to the second) appended at the end of the
+    // search-header line. The lexer classifies a line solely by its first
+    // character, so trailing content is safe.
+    static NSDateFormatter *tsFormatter;
+    static dispatch_once_t tsOnce;
+    dispatch_once(&tsOnce, ^{
+        tsFormatter = [[NSDateFormatter alloc] init];
+        // Fixed locale so the 12-hour clock and the AM/PM marker are
+        // deterministic regardless of the user's region settings.
+        tsFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        tsFormatter.dateFormat = @"yyyy-MM-dd hh:mm:ss a";
+    });
+    // Lowercase so the marker reads "am" / "pm".
+    NSString *timestamp = [[tsFormatter stringFromDate:[NSDate date]] lowercaseString];
+
     // Search header
-    NSString *header = [NSString stringWithFormat:@"Search \"%@\" (%ld hit%@ in %ld file%@ of %ld searched)%@\n",
+    NSString *header = [NSString stringWithFormat:@"Search \"%@\" (%ld hit%@ in %ld file%@ of %ld searched)%@  %@\n",
         searchText,
         (long)totalHits, totalHits == 1 ? @"" : @"s",
         (long)fileResults.count, fileResults.count == 1 ? @"" : @"s",
         (long)filesSearched,
-        suffix];
+        suffix,
+        timestamp];
 
     sptr_t startPos = [_sci message:SCI_GETLENGTH];
-    [_sci message:SCI_APPENDTEXT wParam:header.length lParam:(sptr_t)header.UTF8String];
+    // SCI_APPENDTEXT wParam is the UTF-8 BYTE count, not the NSString character
+    // count. For non-ASCII content these differ (Punjabi/Cyrillic/CJK etc.), and
+    // passing .length truncates the buffer mid-byte — Scintilla drops the
+    // trailing newline, the next APPENDTEXT concatenates inline, and the
+    // results view looks "scrambled" (issue #46). lengthOfBytesUsingEncoding:
+    // returns the exact UTF-8 byte count and is correct for any string.
+    [_sci message:SCI_APPENDTEXT
+                 wParam:[header lengthOfBytesUsingEncoding:NSUTF8StringEncoding]
+                 lParam:(sptr_t)header.UTF8String];
 
     // Add line info for search header
     _SRLineInfo headerInfo = {};
@@ -502,7 +541,10 @@ static sptr_t _srSciColor(NSColor *c) {
             fileRes.filePath,
             (long)fileRes.results.count,
             fileRes.results.count == 1 ? @"" : @"s"];
-        [_sci message:SCI_APPENDTEXT wParam:fileHeader.length lParam:(sptr_t)fileHeader.UTF8String];
+        // wParam = UTF-8 byte count, not character count — see issue #46 note above.
+        [_sci message:SCI_APPENDTEXT
+                     wParam:[fileHeader lengthOfBytesUsingEncoding:NSUTF8StringEncoding]
+                     lParam:(sptr_t)fileHeader.UTF8String];
 
         _SRLineInfo fileInfo = {};
         fileInfo.filePath = fileRes.filePath.UTF8String ?: "";
@@ -539,7 +581,10 @@ static sptr_t _srSciColor(NSColor *c) {
             }
             _markingLines.push_back(marking);
 
-            [_sci message:SCI_APPENDTEXT wParam:resultLine.length lParam:(sptr_t)resultLine.UTF8String];
+            // wParam = UTF-8 byte count, not character count — see issue #46 note above.
+            [_sci message:SCI_APPENDTEXT
+                         wParam:[resultLine lengthOfBytesUsingEncoding:NSUTF8StringEncoding]
+                         lParam:(sptr_t)resultLine.UTF8String];
 
             _SRLineInfo lineInfo = {};
             lineInfo.filePath = r.filePath.UTF8String ?: "";

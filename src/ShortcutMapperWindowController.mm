@@ -1,6 +1,8 @@
 #import "ShortcutMapperWindowController.h"
+#import "NppPaths.h"
 #import "AppDelegate.h"
 #import "MainWindowController.h"
+#import "MenuBuilder.h"          // kMenuTagPlugins
 #import "NppPluginManager.h"
 #import "NppLocalizer.h"
 
@@ -20,6 +22,7 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
 @property (assign) NSInteger  commandID;        // IDM_* or SCI_* or index
 @property (copy, nullable) NSString *selectorName; // macOS selector string
 @property (assign) BOOL isModified;             // user changed from default
+@property (assign) BOOL isMenuShadowed;         // Scintilla cmd shadowed by a same-key NSMenu item (info-only highlight)
 @end
 
 @implementation ShortcutEntry
@@ -123,6 +126,22 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
         @",":@188, @"-":@189, @".":@190, @"/":@191, @"`":@192, @"[":@219, @"\\":@220,
         @"]":@221, @"'":@222};
     return [map[name] unsignedIntegerValue];
+}
+@end
+
+// Table row view that washes a row with a faint orange tint — used to flag the
+// menu-shadowed Scintilla commands. The colour is the Tahoe tab-bar "Orange"
+// (#F5B67A) at ~20% alpha so it reads as a subtle highlight in light and dark.
+@interface _SCMRowView : NSTableRowView
+@property (nonatomic) BOOL tinted;
+@end
+@implementation _SCMRowView
+- (void)drawBackgroundInRect:(NSRect)dirtyRect {
+    [super drawBackgroundInRect:dirtyRect];
+    if (_tinted) {
+        [[NSColor colorWithRed:0xF5/255.0 green:0xB6/255.0 blue:0x7A/255.0 alpha:0.20] set];
+        NSRectFillUsingOperation(self.bounds, NSCompositingOperationSourceOver);
+    }
 }
 @end
 
@@ -339,12 +358,17 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
 
     for (NSUInteger i = 0; i < mainMenu.itemArray.count; i++) {
         NSMenuItem *topItem = mainMenu.itemArray[i];
-        // Skip the Apple/App menu (always index 0)
-        if (i == 0) continue;
         if (!topItem.submenu) continue;
 
-        // The menu name is the submenu's title (topItem.title may return class name)
+        // The menu name is the submenu's title (topItem.title may return class name).
+        // The App menu (index 0) has an empty submenu.title — fall through to the
+        // "Application" label so its entries (Hide / Quit / Preferences / etc.) appear
+        // in a recognisable category. We deliberately INCLUDE the App menu now so the
+        // conflict checker can spot collisions with ⌘H / ⌘Q / ⌘, / ⌘M instead of
+        // silently letting users rebind something to one of those system shortcuts.
         NSString *category = topItem.submenu.title;
+        if (i == 0 && (!category.length || [category isEqualToString:@"NSMenuItem"]))
+            category = @"Application";
         if (!category.length) category = topItem.title;
         if (!category.length || [category isEqualToString:@"NSMenuItem"]) category = @"Other";
 
@@ -362,7 +386,7 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
     }
     // Mark entries that have overrides in shortcuts.xml and restore their shortcuts
     // from the XML (macOS may silently clear duplicate keyEquivalents on live menu items)
-    NSString *scPath = [NSHomeDirectory() stringByAppendingPathComponent:@".notepad++/shortcuts.xml"];
+    NSString *scPath = NppConfigSubpath(@"shortcuts.xml");
     NSData *scData = [NSData dataWithContentsOfFile:scPath];
     if (scData) {
         NSXMLDocument *scDoc = [[NSXMLDocument alloc] initWithData:scData options:0 error:nil];
@@ -398,16 +422,24 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
 }
 
 - (void)_walkMenu:(NSMenu *)menu category:(NSString *)category {
-    // Selectors to skip (dynamic/non-command items)
+    // Selectors to skip (dynamic / repeated items where adding entries would
+    // pollute the table or fire phantom conflicts):
+    //   • openRecentFile:  — recent-files items vary per session
+    //   • runSavedMacro:   — already covered by the Macros tab
+    //   • pluginMenuAction: / pluginToolbarAction: — already covered by Plugins tab
+    //   • submenuAction:   — internal Cocoa wrapper for parent submenu items
+    //   • _showAllCharsDropdown: — dynamic toolbar dropdown anchor
+    //
+    // System selectors (hide:, terminate:, performMiniaturize:, etc.) are
+    // INTENTIONALLY left in the table so the conflict checker can detect
+    // collisions with ⌘H, ⌘Q, ⌘M, ⌃⌘F, etc. They appear in the "Application"
+    // / "Window" categories and are reassignable like any other shortcut.
     static NSSet *skipSelectors;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         skipSelectors = [NSSet setWithObjects:
             @"openRecentFile:", @"runSavedMacro:", @"pluginMenuAction:",
             @"pluginToolbarAction:", @"submenuAction:", @"_showAllCharsDropdown:",
-            @"orderFrontStandardAboutPanel:", @"hide:", @"hideOtherApplications:",
-            @"unhideAllApplications:", @"terminate:", @"performMiniaturize:",
-            @"performZoom:", @"toggleFullScreen:", @"arrangeInFront:",
             nil];
     });
 
@@ -467,7 +499,7 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
 
 - (void)_loadMacroEntries {
     _macroEntries = [NSMutableArray array];
-    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@".notepad++/shortcuts.xml"];
+    NSString *path = NppConfigSubpath(@"shortcuts.xml");
     NSData *data = [NSData dataWithContentsOfFile:path];
     if (!data) return;
     NSXMLDocument *doc = [[NSXMLDocument alloc] initWithData:data options:0 error:nil];
@@ -494,7 +526,7 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
     _runCmdEntries = [NSMutableArray array];
 
     // Load from shortcuts.xml <UserDefinedCommands> only (matches Windows behavior)
-    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@".notepad++/shortcuts.xml"];
+    NSString *path = NppConfigSubpath(@"shortcuts.xml");
     NSData *data = [NSData dataWithContentsOfFile:path];
 
     // If no UserDefinedCommands exist in shortcuts.xml, create defaults
@@ -521,52 +553,53 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
         }
     }
 
-    // Default entries come from the bundled shortcuts.xml (copied to ~/.notepad++/ on first run)
+    // Default entries come from the bundled shortcuts.xml (copied to ~/Library/Application Support/Nextpad++/ on first run)
     NSLog(@"[ShortcutMapper] Run commands: %lu entries", (unsigned long)_runCmdEntries.count);
 }
 
 - (void)_loadPluginEntries {
     _pluginEntries = [NSMutableArray array];
-    // Walk the Plugins menu to extract plugin commands
-    NSMenu *mainMenu = [NSApp mainMenu];
-    for (NSMenuItem *topItem in mainMenu.itemArray) {
-        NSString *menuTitle = topItem.submenu.title ?: topItem.title;
-        if (![menuTitle isEqualToString:@"Plugins"]) continue;
-        [topItem.submenu update];
-        for (NSMenuItem *pluginItem in topItem.submenu.itemArray) {
-            if (pluginItem.isSeparatorItem) continue;
-            if (!pluginItem.submenu) continue;
-            NSString *plugName = pluginItem.title;
-            if (!plugName.length) continue;
-            [pluginItem.submenu update];
-            for (NSMenuItem *cmdItem in pluginItem.submenu.itemArray) {
-                if (cmdItem.isSeparatorItem || !cmdItem.action) continue;
-                if (!cmdItem.title.length) continue;
-                // Skip separator-like items (some plugins use "-" as menu item title)
-                // Skip separator-like items (plugins use "-" as title for separators)
-                NSString *trimmed = [cmdItem.title stringByTrimmingCharactersInSet:
-                    [NSCharacterSet characterSetWithCharactersInString:@"- "]];
-                if (trimmed.length == 0) continue;
-                ShortcutEntry *e = [[ShortcutEntry alloc] init];
-                e.name = cmdItem.title;
-                e.pluginName = plugName;
-                e.commandID = cmdItem.tag;
-                e.selectorName = NSStringFromSelector(cmdItem.action);
-                // Extract key
-                NSString *key = cmdItem.keyEquivalent;
-                NSEventModifierFlags mods = cmdItem.keyEquivalentModifierMask;
-                if (key.length > 0 && [key characterAtIndex:0] > 32) {
-                    e.hasCmd   = (mods & NSEventModifierFlagCommand) != 0;
-                    e.hasCtrl  = (mods & NSEventModifierFlagControl) != 0;
-                    e.hasAlt   = (mods & NSEventModifierFlagOption)  != 0;
-                    e.hasShift = (mods & NSEventModifierFlagShift)   != 0;
-                    e.keyCode  = [key.uppercaseString characterAtIndex:0];
-                }
-                [e updateDisplay];
-                [_pluginEntries addObject:e];
+    // Walk the Plugins menu to extract plugin commands. Use the tag-based
+    // lookup so this works regardless of UI language — a literal-title
+    // scan would fall through and the Shortcut Mapper's Plugins tab would
+    // be empty in any non-English locale.
+    NSMenu *pluginsMenu = [[[NSApp mainMenu] itemWithTag:kMenuTagPlugins] submenu];
+    if (!pluginsMenu) {
+        NSLog(@"[ShortcutMapper] Plugins menu not found (tag missing)");
+        return;
+    }
+    [pluginsMenu update];
+    for (NSMenuItem *pluginItem in pluginsMenu.itemArray) {
+        if (pluginItem.isSeparatorItem) continue;
+        if (!pluginItem.submenu) continue;
+        NSString *plugName = pluginItem.title;
+        if (!plugName.length) continue;
+        [pluginItem.submenu update];
+        for (NSMenuItem *cmdItem in pluginItem.submenu.itemArray) {
+            if (cmdItem.isSeparatorItem || !cmdItem.action) continue;
+            if (!cmdItem.title.length) continue;
+            // Skip separator-like items (plugins use "-" as title for separators)
+            NSString *trimmed = [cmdItem.title stringByTrimmingCharactersInSet:
+                [NSCharacterSet characterSetWithCharactersInString:@"- "]];
+            if (trimmed.length == 0) continue;
+            ShortcutEntry *e = [[ShortcutEntry alloc] init];
+            e.name = cmdItem.title;
+            e.pluginName = plugName;
+            e.commandID = cmdItem.tag;
+            e.selectorName = NSStringFromSelector(cmdItem.action);
+            // Extract key
+            NSString *key = cmdItem.keyEquivalent;
+            NSEventModifierFlags mods = cmdItem.keyEquivalentModifierMask;
+            if (key.length > 0 && [key characterAtIndex:0] > 32) {
+                e.hasCmd   = (mods & NSEventModifierFlagCommand) != 0;
+                e.hasCtrl  = (mods & NSEventModifierFlagControl) != 0;
+                e.hasAlt   = (mods & NSEventModifierFlagOption)  != 0;
+                e.hasShift = (mods & NSEventModifierFlagShift)   != 0;
+                e.keyCode  = [key.uppercaseString characterAtIndex:0];
             }
+            [e updateDisplay];
+            [_pluginEntries addObject:e];
         }
-        break;
     }
     NSLog(@"[ShortcutMapper] Plugin commands: %lu entries", (unsigned long)_pluginEntries.count);
 }
@@ -595,9 +628,11 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
         {"SCI_MOVECARETINSIDEVIEW",  2401, NO,  NO,  NO,  0},
         {"SCI_LINEDOWN",             2300, NO,  NO,  NO,  40},  // Down
         {"SCI_LINEDOWNEXTEND",       2301, NO,  NO,  YES, 40},
+        {"SCI_LINEDOWNRECTEXTEND",   2426, NO,  YES, YES, 40},  // Opt+Shift+Down
         {"SCI_LINESCROLLDOWN",       2342, YES, NO,  NO,  40},
         {"SCI_LINEUP",               2302, NO,  NO,  NO,  38},  // Up
         {"SCI_LINEUPEXTEND",         2303, NO,  NO,  YES, 38},
+        {"SCI_LINEUPRECTEXTEND",     2427, NO,  YES, YES, 38},  // Opt+Shift+Up
         {"SCI_LINESCROLLUP",         2343, YES, NO,  NO,  38},
         {"SCI_PARADOWN",             2413, YES, NO,  NO,  221}, // ]
         {"SCI_PARADOWNEXTEND",       2414, YES, NO,  YES, 221},
@@ -605,30 +640,53 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
         {"SCI_PARAUPEXTEND",         2416, YES, NO,  YES, 219},
         {"SCI_CHARLEFT",             2304, NO,  NO,  NO,  37},  // Left
         {"SCI_CHARLEFTEXTEND",       2305, NO,  NO,  YES, 37},
+        {"SCI_CHARLEFTRECTEXTEND",   2428, NO,  YES, YES, 37},  // Opt+Shift+Left
         {"SCI_CHARRIGHT",            2306, NO,  NO,  NO,  39},  // Right
         {"SCI_CHARRIGHTEXTEND",      2307, NO,  NO,  YES, 39},
+        {"SCI_CHARRIGHTRECTEXTEND",  2429, NO,  YES, YES, 39},  // Opt+Shift+Right
         {"SCI_WORDLEFT",             2308, YES, NO,  NO,  37},
         {"SCI_WORDLEFTEXTEND",       2309, YES, NO,  YES, 37},
+        {"SCI_WORDLEFTEND",          2439, NO,  NO,  NO,  0},
+        {"SCI_WORDLEFTENDEXTEND",    2440, NO,  NO,  NO,  0},
         {"SCI_WORDRIGHT",            2310, YES, NO,  NO,  39},
         {"SCI_WORDRIGHTEXTEND",      2311, YES, NO,  YES, 39},
+        {"SCI_WORDRIGHTEND",         2441, NO,  NO,  NO,  0},
+        {"SCI_WORDRIGHTENDEXTEND",   2442, NO,  NO,  NO,  0},
         {"SCI_WORDPARTLEFT",         2390, YES, NO,  NO,  191},
         {"SCI_WORDPARTLEFTEXTEND",   2391, YES, NO,  YES, 191},
         {"SCI_WORDPARTRIGHT",        2392, YES, NO,  NO,  220},
         {"SCI_WORDPARTRIGHTEXTEND",  2393, YES, NO,  YES, 220},
         {"SCI_HOME",                 2312, NO,  NO,  NO,  36},
         {"SCI_HOMEEXTEND",           2313, NO,  NO,  YES, 36},
+        {"SCI_HOMERECTEXTEND",       2430, NO,  NO,  NO,  0},
+        {"SCI_HOMEDISPLAY",          2345, NO,  YES, NO,  36},  // Opt+Home
+        {"SCI_HOMEDISPLAYEXTEND",    2346, NO,  NO,  NO,  0},
+        {"SCI_HOMEWRAP",             2349, NO,  NO,  NO,  0},
+        {"SCI_HOMEWRAPEXTEND",       2450, NO,  NO,  NO,  0},
         {"SCI_VCHOME",               2331, NO,  NO,  NO,  0},
         {"SCI_VCHOMEEXTEND",         2332, NO,  NO,  NO,  0},
+        {"SCI_VCHOMERECTEXTEND",     2431, NO,  YES, YES, 36},  // Opt+Shift+Home
+        {"SCI_VCHOMEDISPLAY",        2652, NO,  NO,  NO,  0},
+        {"SCI_VCHOMEDISPLAYEXTEND",  2653, NO,  NO,  NO,  0},
+        {"SCI_VCHOMEWRAP",           2453, NO,  NO,  NO,  0},
+        {"SCI_VCHOMEWRAPEXTEND",     2454, NO,  NO,  NO,  0},
         {"SCI_LINEEND",              2314, NO,  NO,  NO,  35},
         {"SCI_LINEENDEXTEND",        2315, NO,  NO,  YES, 35},
+        {"SCI_LINEENDRECTEXTEND",    2432, NO,  YES, YES, 35},  // Opt+Shift+End
+        {"SCI_LINEENDDISPLAY",       2347, NO,  YES, NO,  35},  // Opt+End
+        {"SCI_LINEENDDISPLAYEXTEND", 2348, NO,  NO,  NO,  0},
+        {"SCI_LINEENDWRAP",          2451, NO,  NO,  NO,  0},
+        {"SCI_LINEENDWRAPEXTEND",    2452, NO,  NO,  NO,  0},
         {"SCI_DOCUMENTSTART",        2316, YES, NO,  NO,  36},
         {"SCI_DOCUMENTSTARTEXTEND",  2317, YES, NO,  YES, 36},
         {"SCI_DOCUMENTEND",          2318, YES, NO,  NO,  35},
         {"SCI_DOCUMENTENDEXTEND",    2319, YES, NO,  YES, 35},
         {"SCI_PAGEUP",               2320, NO,  NO,  NO,  33},
         {"SCI_PAGEUPEXTEND",         2321, NO,  NO,  YES, 33},
+        {"SCI_PAGEUPRECTEXTEND",     2433, NO,  YES, YES, 33},  // Opt+Shift+PageUp
         {"SCI_PAGEDOWN",             2322, NO,  NO,  NO,  34},
         {"SCI_PAGEDOWNEXTEND",       2323, NO,  NO,  YES, 34},
+        {"SCI_PAGEDOWNRECTEXTEND",   2434, NO,  YES, YES, 34},  // Opt+Shift+PageDown
         {"SCI_DELETEBACK",           2326, NO,  NO,  NO,  8},
         {"SCI_DELETEBACKNOTLINE",    2344, NO,  NO,  NO,  0},
         {"SCI_DELWORDLEFT",          2335, YES, NO,  NO,  8},
@@ -639,6 +697,7 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
         {"SCI_LINECUT",              2337, YES, NO,  NO,  'L'},
         {"SCI_LINECOPY",             2455, YES, NO,  YES, 'X'},
         {"SCI_LINETRANSPOSE",        2339, YES, NO,  NO,  'T'},
+        {"SCI_LINEDUPLICATE",        2404, NO,  NO,  NO,  0},
         {"SCI_CUT",                  2177, YES, NO,  NO,  'X'},
         {"SCI_COPY",                 2178, YES, NO,  NO,  'C'},
         {"SCI_PASTE",                2179, YES, NO,  NO,  'V'},
@@ -647,9 +706,11 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
         {"SCI_STUTTEREDPAGEUPEXTEND",2436, NO,  NO,  NO,  0},
         {"SCI_STUTTEREDPAGEDOWN",    2437, NO,  NO,  NO,  0},
         {"SCI_STUTTEREDPAGEDOWNEXTEND",2438,NO, NO,  NO,  0},
+        {"SCI_SWAPMAINANCHORCARET",  2607, NO,  NO,  NO,  0},
+        {"SCI_ROTATESELECTION",      2606, NO,  NO,  NO,  0},
     };
     // Read existing overrides from shortcuts.xml
-    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@".notepad++/shortcuts.xml"];
+    NSString *path = NppConfigSubpath(@"shortcuts.xml");
     NSData *xmlData = [NSData dataWithContentsOfFile:path];
     NSXMLDocument *xmlDoc = xmlData ? [[NSXMLDocument alloc] initWithData:xmlData options:0 error:nil] : nil;
     NSArray *xmlScintKeys = xmlDoc ? [xmlDoc nodesForXPath:@"//ScintillaKeys/ScintKey" error:nil] : @[];
@@ -689,6 +750,22 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
             e.hasAlt   = defs[i].alt;
             e.hasShift = defs[i].shift;
             e.keyCode  = defs[i].key;
+        }
+        // The 6 standard-edit commands whose Scintilla-tab shortcut sits on the EXACT
+        // same key as a Cocoa Edit-menu item (Select All ⌘A, Undo ⌘Z, Redo ⌘⇧Z, Cut ⌘X,
+        // Copy ⌘C, Paste ⌘V). AppKit fires the menu first, so changing them here is a
+        // no-op — they're highlighted to signal that. They stay editable (info-only).
+        // (Zoom/SelectionDuplicate are NOT included: their Scintilla keys differ from the
+        // menu's ⌘+/⌘-/⌘0/⌘D, so those overrides actually take effect.)
+        switch (defs[i].sciID) {
+            case 2013: // SCI_SELECTALL
+            case 2176: // SCI_UNDO
+            case 2011: // SCI_REDO
+            case 2177: // SCI_CUT
+            case 2178: // SCI_COPY
+            case 2179: // SCI_PASTE
+                e.isMenuShadowed = YES; break;
+            default: break;
         }
         [e updateDisplay];
         [_scintillaEntries addObject:e];
@@ -771,6 +848,15 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
     return (NSInteger)_filteredEntries.count;
+}
+
+// Returns a row view that paints a subtle orange wash behind menu-shadowed Scintilla
+// commands (see _loadScintillaEntries) so users can tell those rows are menu-driven.
+- (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row {
+    _SCMRowView *rv = [tableView makeViewWithIdentifier:@"SCMRow" owner:nil];
+    if (!rv) { rv = [[_SCMRowView alloc] init]; rv.identifier = @"SCMRow"; }
+    rv.tinted = (row >= 0 && row < (NSInteger)_filteredEntries.count) && _filteredEntries[row].isMenuShadowed;
+    return rv;
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)row {
@@ -935,11 +1021,37 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
     conflictLabel.maximumNumberOfLines = 2;
     [cv addSubview:conflictLabel];
 
+    // OK button is created up here (instead of below the checkConflict
+    // block) so the conflict-check block can hold a strong reference and
+    // toggle its enabled state live. Disabling OK when a conflict is
+    // detected is the user-facing half of the "no silent collisions" rule:
+    // the warning label tells the user what's wrong, and the disabled OK
+    // forces them to pick something non-conflicting (or "None") before
+    // saving. The block-operation wiring further down then fires
+    // checkConflict on every modifier or key change, keeping enabled in
+    // sync with whatever the user is currently picking.
+    NSButton *btnOK = [[NSButton alloc] initWithFrame:NSMakeRect(195, 12, 90, 28)];
+    btnOK.title = [[NppLocalizer shared] translate:@"OK"]; btnOK.bezelStyle = NSBezelStyleRounded;
+    btnOK.keyEquivalent = @"\r"; btnOK.target = NSApp; btnOK.action = @selector(stopModal);
+    [cv addSubview:btnOK];
+
+    NSButton *btnCancel = [[NSButton alloc] initWithFrame:NSMakeRect(293, 12, 90, 28)];
+    btnCancel.title = [[NppLocalizer shared] translate:@"Cancel"]; btnCancel.bezelStyle = NSBezelStyleRounded;
+    btnCancel.keyEquivalent = @"\033"; btnCancel.target = NSApp; btnCancel.action = @selector(abortModal);
+    [cv addSubview:btnCancel];
+
     // Live conflict check block
     __weak ShortcutMapperWindowController *weakSelf = self;
     void (^checkConflict)(void) = ^{
         NSUInteger keyCode = [ShortcutEntry keyCodeForName:keyPopup.titleOfSelectedItem];
-        if (keyCode == 0) { conflictLabel.stringValue = @""; return; }
+        if (keyCode == 0) {
+            // No key picked → no shortcut → "no conflict" is the correct
+            // resting state, and OK must be enabled so the user can save
+            // a cleared / never-set entry.
+            conflictLabel.stringValue = @"";
+            btnOK.enabled = YES;
+            return;
+        }
 
         // Build a temporary entry to check against
         ShortcutEntry *test = [[ShortcutEntry alloc] init];
@@ -953,9 +1065,11 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
         if (conflicts.length) {
             conflictLabel.textColor = [NSColor systemRedColor];
             conflictLabel.stringValue = [NSString stringWithFormat:[[NppLocalizer shared] translate:@"CONFLICT: %@"], conflicts];
+            btnOK.enabled = NO;
         } else {
             conflictLabel.textColor = [NSColor secondaryLabelColor];
             conflictLabel.stringValue = [[NppLocalizer shared] translate:@"No shortcut conflicts."];
+            btnOK.enabled = YES;
         }
     };
 
@@ -979,19 +1093,8 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
     keyPopup.action = @selector(main);
     [targetOps addObject:keyOp];
 
-    // Initial check
+    // Initial check (also sets btnOK.enabled to its starting state)
     checkConflict();
-
-    // Buttons
-    NSButton *btnOK = [[NSButton alloc] initWithFrame:NSMakeRect(195, 12, 90, 28)];
-    btnOK.title = [[NppLocalizer shared] translate:@"OK"]; btnOK.bezelStyle = NSBezelStyleRounded;
-    btnOK.keyEquivalent = @"\r"; btnOK.target = NSApp; btnOK.action = @selector(stopModal);
-    [cv addSubview:btnOK];
-
-    NSButton *btnCancel = [[NSButton alloc] initWithFrame:NSMakeRect(293, 12, 90, 28)];
-    btnCancel.title = [[NppLocalizer shared] translate:@"Cancel"]; btnCancel.bezelStyle = NSBezelStyleRounded;
-    btnCancel.keyEquivalent = @"\033"; btnCancel.target = NSApp; btnCancel.action = @selector(abortModal);
-    [cv addSubview:btnCancel];
 
     NSModalResponse resp = [NSApp runModalForWindow:panel];
     [panel orderOut:nil];
@@ -1078,8 +1181,19 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
     for (ShortcutEntry *e in allEntries) {
         if (!e.isModified) continue;
         if (!e.selectorName) continue;
-        SEL sel = NSSelectorFromString(e.selectorName);
-        NSMenuItem *mi = [self _findMenuItemWithAction:sel inMenu:[NSApp mainMenu]];
+        // Plugin commands all share the same selector (pluginMenuAction:), so a
+        // selector-only lookup returns the *first* plugin menu item in the
+        // walk and applies every plugin shortcut to it (issue #86). Resolve
+        // plugin entries via (pluginName, commandID) instead — mirroring the
+        // logic AppDelegate._loadShortcutOverrides already uses to apply
+        // shortcuts.xml at launch.
+        NSMenuItem *mi = nil;
+        if ([e.selectorName isEqualToString:@"pluginMenuAction:"] && e.pluginName.length) {
+            mi = [self _findPluginMenuItemWithName:e.pluginName internalID:e.commandID];
+        } else {
+            SEL sel = NSSelectorFromString(e.selectorName);
+            mi = [self _findMenuItemWithAction:sel inMenu:[NSApp mainMenu]];
+        }
         if (!mi) continue;
         [self _applyShortcutEntry:e toMenuItem:mi];
         modCount++;
@@ -1135,6 +1249,34 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
     mi.keyEquivalentModifierMask = mods;
 }
 
+// Resolve a plugin menu item by (pluginName, commandID) instead of by
+// selector. The selector pluginMenuAction: is shared across every plugin
+// command; only (parent-submenu-title, NSMenuItem.tag) identifies a command
+// uniquely. Mirrors AppDelegate._loadShortcutOverrides:485-505 — keep both
+// codepaths in sync if the matching policy ever changes.
+//
+// The tag-OR-cmdIdx fallback is intentional: most plugins assign tags 0..N
+// sequentially so cmdIdx == tag in practice, but if a plugin uses sparse
+// or unset tags, the cmdIdx leg still finds the Nth runnable command.
+- (nullable NSMenuItem *)_findPluginMenuItemWithName:(NSString *)pluginName
+                                          internalID:(NSInteger)internalID {
+    if (!pluginName.length) return nil;
+    NSMenu *pluginsMenu = [[[NSApp mainMenu] itemWithTag:kMenuTagPlugins] submenu];
+    if (!pluginsMenu) return nil;
+    for (NSMenuItem *pluginItem in pluginsMenu.itemArray) {
+        if (![pluginItem.title isEqualToString:pluginName]) continue;
+        if (!pluginItem.submenu) continue;
+        NSInteger cmdIdx = 0;
+        for (NSMenuItem *cmdItem in pluginItem.submenu.itemArray) {
+            if (cmdItem.isSeparatorItem || !cmdItem.action) continue;
+            if (cmdItem.tag == internalID || cmdIdx == internalID)
+                return cmdItem;
+            cmdIdx++;
+        }
+    }
+    return nil;
+}
+
 - (nullable NSMenuItem *)_findMenuItemWithAction:(SEL)action inMenu:(NSMenu *)menu {
     for (NSMenuItem *mi in menu.itemArray) {
         if (mi.action == action) return mi;
@@ -1147,7 +1289,7 @@ NSNotificationName const NPPShortcutsChangedNotification = @"NPPShortcutsChanged
 }
 
 - (void)_saveToShortcutsXML {
-    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@".notepad++/shortcuts.xml"];
+    NSString *path = NppConfigSubpath(@"shortcuts.xml");
 
     // Read existing shortcuts.xml — modify in-place to preserve comments and structure
     NSData *existingData = [NSData dataWithContentsOfFile:path];

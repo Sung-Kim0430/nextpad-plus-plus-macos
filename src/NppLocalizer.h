@@ -12,7 +12,7 @@ extern NSNotificationName const NPPLocalizationChanged;
 extern NSString * const kPrefLanguage;
 
 // ---------------------------------------------------------------------------
-// NppLocalizer — singleton that loads a Notepad++ nativeLang XML file
+// NppLocalizer — singleton that loads a Nextpad++ nativeLang XML file
 // (the exact same format used by the Windows version) and applies
 // translations to the macOS app's main menu and on-demand string lookups.
 //
@@ -77,11 +77,29 @@ extern NSString * const kPrefLanguage;
 
 /// Path of the per-user localization directory.
 /// Users can drop additional XML files here to add languages.
-/// ~/Library/Application Support/Notepad++/localization/
+/// ~/Library/Application Support/Nextpad++/localization/
 + (NSString *)userLanguageDirectory;
 
 /// Path of the localization directory bundled inside the app.
 + (NSString *)bundledLanguageDirectory;
+
+/// The original English title of a menu item (what it was before localization),
+/// or its current title if it was never translated. Language-independent — lets
+/// callers (e.g. the tab context menu builder) match menu items by their English
+/// name regardless of the active UI language.
++ (NSString *)englishTitleOfMenuItem:(NSMenuItem *)item;
+
+/// The original English title of an NSMenu (e.g. a top-level "File" submenu),
+/// or its current title if never translated. Top-level menu *items* often have
+/// an empty title (the name lives on the submenu), so use this to match menu
+/// entries like File/Edit/View regardless of language.
++ (NSString *)englishTitleOfMenu:(NSMenu *)menu;
+
+/// Normalize a menu title for matching: strips accelerators, converts "..."→"…",
+/// drops a trailing " (…)" parenthetical, trims and lowercases — the same rules
+/// used to localize menus. Pair with +englishTitleOfMenuItem: to match items the
+/// way the localizer does (handles the ellipsis/punctuation differences too).
++ (NSString *)normalizedTitleKey:(NSString *)title;
 
 @end
 

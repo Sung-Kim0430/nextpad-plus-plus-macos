@@ -1,4 +1,11 @@
 #import "MenuBuilder.h"
+#import "NppBuiltinLanguages.h"
+
+// Top-level menu-item tags. See MenuBuilder.h for rationale.
+const NSInteger kMenuTagMacro    = 9900;
+const NSInteger kMenuTagRun      = 9902;
+const NSInteger kMenuTagLanguage = 9904;
+const NSInteger kMenuTagPlugins  = 9905;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -54,142 +61,53 @@ static NSMenuItem *langItem(NSString *display, NSString *langName) {
 
 static NSMenu *buildLanguageMenu() {
     NSMenu *m = submenu(@"Language");
-    [m addItem:langItem(@"None (Normal Text)", @"")];
+
+    // Generate from the Windows-authoritative built-in language table (issue
+    // #144 follow-up). The table is sorted alphabetically by caption with
+    // "None (Normal Text)" pinned at index 0.
+    NSUInteger count = 0;
+    const NppBuiltinLang *langs = NppBuiltinLanguagesAll(&count);
+
+    // ── Pinned top: "None (Normal Text)" ────────────────────────────────────
+    // Empty representedObject → setLanguageFromMenu: routes through
+    // setLanguage:@"" → plain branch in EditorView.
+    [m addItem:langItem(@(langs[0].caption), @"")];
     addSep(m);
 
-    NSMenu *mA = submenu(@"A");
-    [mA addItem:langItem(@"Ada",      @"ada")];
-    [mA addItem:langItem(@"ASP",      @"asp")];
-    [mA addItem:langItem(@"Assembly", @"asm")];
-    [m addItem:withSubmenu(@"A", mA)];
+    // ── Letter-grouped submenus (entries 1..count-1) ────────────────────────
+    // Walk the pre-sorted table in one pass; flush each letter's submenu
+    // when we hit a new first-letter.
+    NSMenu *letterMenu = nil;
+    NSString *letterTitle = nil;
+    unichar currentLetter = 0;
+    for (NSUInteger i = 1; i < count; i++) {
+        NSString *cap      = @(langs[i].caption);
+        NSString *internal = @(langs[i].internalName);
+        unichar firstChar  = (unichar)toupper((int)[cap characterAtIndex:0]);
+        if (firstChar != currentLetter) {
+            if (letterMenu) [m addItem:withSubmenu(letterTitle, letterMenu)];
+            currentLetter = firstChar;
+            letterTitle   = [NSString stringWithCharacters:&firstChar length:1];
+            letterMenu    = submenu(letterTitle);
+        }
+        [letterMenu addItem:langItem(cap, internal)];
+    }
+    if (letterMenu) [m addItem:withSubmenu(letterTitle, letterMenu)];
 
-    NSMenu *mB = submenu(@"B");
-    [mB addItem:langItem(@"Bash",  @"bash")];
-    [mB addItem:langItem(@"Batch", @"batch")];
-    [m addItem:withSubmenu(@"B", mB)];
-
-    NSMenu *mC = submenu(@"C");
-    [mC addItem:langItem(@"C",          @"c")];
-    [mC addItem:langItem(@"C#",         @"cs")];
-    [mC addItem:langItem(@"C++",        @"cpp")];
-    [mC addItem:langItem(@"CMake",      @"cmake")];
-    [mC addItem:langItem(@"COBOL",      @"cobol")];
-    [mC addItem:langItem(@"CSS",        @"css")];
-    [m addItem:withSubmenu(@"C", mC)];
-
-    NSMenu *mD = submenu(@"D");
-    [mD addItem:langItem(@"D",    @"d")];
-    [mD addItem:langItem(@"Diff", @"diff")];
-    [m addItem:withSubmenu(@"D", mD)];
-
-    NSMenu *mE = submenu(@"E");
-    [mE addItem:langItem(@"Erlang", @"erlang")];
-    [m addItem:withSubmenu(@"E", mE)];
-
-    NSMenu *mF = submenu(@"F");
-    [mF addItem:langItem(@"Fortran", @"fortran")];
-    [m addItem:withSubmenu(@"F", mF)];
-
-    NSMenu *mG = submenu(@"G");
-    [mG addItem:langItem(@"Go",     @"go")];
-    [mG addItem:langItem(@"Groovy", @"groovy")];
-    [m addItem:withSubmenu(@"G", mG)];
-
-    NSMenu *mH = submenu(@"H");
-    [mH addItem:langItem(@"Haskell", @"haskell")];
-    [mH addItem:langItem(@"HTML",    @"html")];
-    [m addItem:withSubmenu(@"H", mH)];
-
-    NSMenu *mI = submenu(@"I");
-    [mI addItem:langItem(@"INI", @"ini")];
-    [m addItem:withSubmenu(@"I", mI)];
-
-    NSMenu *mJ = submenu(@"J");
-    [mJ addItem:langItem(@"Java",       @"java")];
-    // representedObject must match the value stored in EditorView.currentLanguage.
-    // langs.xml's <Language> entry for .js/.jsx/.mjs/.jsm is named "javascript.js"
-    // (Windows NPP's canonical L_JAVASCRIPT name), so file auto-detect stores
-    // "javascript.js". Use the same spelling here so the menu-click path ends up
-    // with the same _currentLanguage value and the checkmark matches.
-    [mJ addItem:langItem(@"JavaScript", @"javascript.js")];
-    [mJ addItem:langItem(@"JSON",       @"json")];
-    [m addItem:withSubmenu(@"J", mJ)];
-
-    [m addItem:langItem(@"KIXtart", @"kix")];
-
-    NSMenu *mL = submenu(@"L");
-    [mL addItem:langItem(@"Lisp", @"lisp")];
-    [mL addItem:langItem(@"Lua",  @"lua")];
-    [m addItem:withSubmenu(@"L", mL)];
-
-    NSMenu *mM = submenu(@"M");
-    [mM addItem:langItem(@"Makefile", @"makefile")];
-    [mM addItem:langItem(@"Markdown", @"markdown")];
-    [m addItem:withSubmenu(@"M", mM)];
-
-    NSMenu *mN = submenu(@"N");
-    [mN addItem:langItem(@"Nim",  @"nim")];
-    [mN addItem:langItem(@"NSIS", @"nsis")];
-    [m addItem:withSubmenu(@"N", mN)];
-
-    NSMenu *mO = submenu(@"O");
-    [mO addItem:langItem(@"Objective-C", @"objc")];
-    [m addItem:withSubmenu(@"O", mO)];
-
-    NSMenu *mP = submenu(@"P");
-    [mP addItem:langItem(@"Pascal",     @"pascal")];
-    [mP addItem:langItem(@"Perl",       @"perl")];
-    [mP addItem:langItem(@"PHP",        @"php")];
-    [mP addItem:langItem(@"PowerShell", @"powershell")];
-    [mP addItem:langItem(@"Properties", @"props")];
-    [mP addItem:langItem(@"Python",     @"python")];
-    [m addItem:withSubmenu(@"P", mP)];
-
-    NSMenu *mR = submenu(@"R");
-    [mR addItem:langItem(@"R",    @"r")];
-    [mR addItem:langItem(@"Ruby", @"ruby")];
-    [mR addItem:langItem(@"Rust", @"rust")];
-    [m addItem:withSubmenu(@"R", mR)];
-
-    NSMenu *mS = submenu(@"S");
-    [mS addItem:langItem(@"SQL",   @"sql")];
-    [mS addItem:langItem(@"Swift", @"swift")];
-    [m addItem:withSubmenu(@"S", mS)];
-
-    NSMenu *mT = submenu(@"T");
-    [mT addItem:langItem(@"TOML",       @"toml")];
-    [mT addItem:langItem(@"TypeScript", @"typescript")];
-    [m addItem:withSubmenu(@"T", mT)];
-
-    NSMenu *mV = submenu(@"V");
-    // Same reasoning as JavaScript above: langs.xml's <Language> entry for
-    // .vb/.vba/.vbs is named "vb" (Windows NPP's canonical L_VB name), so file
-    // auto-detect stores "vb". Using "vbscript" here would also break the
-    // lexer path: languageLexerNameMap has "vb"→"vb" but no "vbscript" key,
-    // so clicking VBScript never applied syntax highlighting.
-    [mV addItem:langItem(@"VBScript", @"vb")];
-    [mV addItem:langItem(@"Verilog",  @"verilog")];
-    [m addItem:withSubmenu(@"V", mV)];
-
-    [m addItem:langItem(@"XML",  @"xml")];
-    [m addItem:langItem(@"YAML", @"yaml")];
-
+    // ── UDL section ────────────────────────────────────────────────────────
     addSep(m);
     NSMenu *udlMenu = submenu(@"User Defined Language");
     [udlMenu addItem:item(@"Define your language…", @selector(showDefineLanguage:), @"")];
     [udlMenu addItem:item(@"Open User Defined Language Folder…", @selector(openUDLFolder:), @"")];
-    [udlMenu addItem:item(@"Notepad++ User Defined Languages Collection", @selector(openUDLCollection:), @"")];
+    [udlMenu addItem:item(@"Nextpad++ User Defined Languages Collection", @selector(openUDLCollection:), @"")];
     [m addItem:withSubmenu(@"User Defined Language", udlMenu)];
-    // Pre-installed Markdown UDLs — use UDL action (not built-in lexer)
-    NSMenuItem *mdItem = item(@"Markdown (preinstalled)", @selector(setUDLLanguageFromMenu:), @"");
-    mdItem.representedObject = @"Markdown (preinstalled)";
-    [m addItem:mdItem];
-    NSMenuItem *mdDmItem = item(@"Markdown (preinstalled dark mode)", @selector(setUDLLanguageFromMenu:), @"");
-    mdDmItem.representedObject = @"Markdown (preinstalled dark mode)";
-    [m addItem:mdDmItem];
 
-    // User UDLs are inserted dynamically after the separator by
-    // MainWindowController.rebuildUDLLanguageMenu.
+    // Trailing separator anchors the dynamic UDL-insertion zone. ALL loaded
+    // UDLs (including the preinstalled Markdown variants) are inserted by
+    // MainWindowController.rebuildUDLLanguageMenu after this separator —
+    // there are no static preinstalled entries here anymore (the previous
+    // hardcoded menu had them; the generated table doesn't include markdown
+    // since Windows doesn't ship it as a built-in lexer).
     addSep(m);
     m.title = @"Language";
 
@@ -209,8 +127,9 @@ static NSMenu *buildLanguageMenu() {
     [main addItem:appItem];
     NSMenu *appMenu = submenu(@"App");
     appItem.submenu = appMenu;
-    [appMenu addItemWithTitle:@"About Notepad++" action:@selector(showAboutPanel:) keyEquivalent:@""];
+    [appMenu addItemWithTitle:@"About Nextpad++" action:@selector(showAboutPanel:) keyEquivalent:@""];
     [appMenu addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""];
+    [appMenu addItemWithTitle:@"Install nextpad++ Command Line Tool…" action:@selector(installCommandLineTool:) keyEquivalent:@""];
     addSep(appMenu);
     // Apple renamed "Preferences…" to "Settings…" starting in macOS Ventura (13).
     NSString *prefsTitle = ([NSProcessInfo processInfo].operatingSystemVersion.majorVersion >= 13)
@@ -218,11 +137,12 @@ static NSMenu *buildLanguageMenu() {
     [appMenu addItem:item(prefsTitle, @selector(showPreferences:), @",")];
     addSep(appMenu);
     [appMenu addItemWithTitle:@"Hide Notepad++" action:@selector(hide:) keyEquivalent:@"h"];
+    [appMenu addItemWithTitle:@"Hide Nextpad++" action:@selector(hide:) keyEquivalent:@"h"];
     NSMenuItem *hideOthers = [appMenu addItemWithTitle:@"Hide Others" action:@selector(hideOtherApplications:) keyEquivalent:@"h"];
     hideOthers.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     [appMenu addItemWithTitle:@"Show All" action:@selector(unhideAllApplications:) keyEquivalent:@""];
     addSep(appMenu);
-    [appMenu addItemWithTitle:@"Quit Notepad++" action:@selector(terminate:) keyEquivalent:@"q"];
+    [appMenu addItemWithTitle:@"Quit Nextpad++" action:@selector(terminate:) keyEquivalent:@"q"];
 
     // ── File ─────────────────────────────────────────────────────────────────
     NSMenuItem *fileItem = [[NSMenuItem alloc] init];
@@ -470,10 +390,10 @@ static NSMenu *buildLanguageMenu() {
     [editMenu addItem:item(@"Clipboard History", @selector(showClipboardHistory:), @"")];
     addSep(editMenu);
 
-    NSMenu *roMenu = submenu(@"Read-Only in Notepad++");
+    NSMenu *roMenu = submenu(@"Read-Only in Nextpad++");
     [roMenu addItem:item(@"Toggle Read-Only",        @selector(toggleReadOnly:),  @"")];
     [roMenu addItem:item(@"Clear Read-Only Flag", @selector(clearReadOnlyFlag:), @"")];
-    [editMenu addItem:withSubmenu(@"Read-Only in Notepad++", roMenu)];
+    [editMenu addItem:withSubmenu(@"Read-Only in Nextpad++", roMenu)];
     NSMenu *lockedMenu = submenu(@"Locked Attribute (macOS)");
     [lockedMenu addItem:item(@"Lock",   @selector(lockFileAttribute:),   @"")];
     [lockedMenu addItem:item(@"Unlock", @selector(unlockFileAttribute:), @"")];
@@ -536,8 +456,17 @@ static NSMenu *buildLanguageMenu() {
     [searchMenu addItem:item(@"Find (Volatile) Next",     @selector(findVolatileNext:),     @"")];
     [searchMenu addItem:item(@"Find (Volatile) Previous", @selector(findVolatilePrevious:), @"")];
     addSep(searchMenu);
+    // ⇧⌘H opens the Find window's Replace tab (issue #61). The previous
+    // shortcut ⌥⌘H clashed with the macOS-standard "Hide Others"
+    // (App-menu, MenuBuilder.mm:222-223), and macOS does not define a
+    // winner when two app menu items share a shortcut — the result was
+    // undefined dispatch. ⇧⌘H also forms a logical pair with ⌘F and
+    // ⇧⌘F, so the Shift modifier consistently means "another Find
+    // variant", and matches the natural Mac mapping for Nextpad++ on
+    // Windows where Ctrl+H is Replace. Both ⇧⌘H itself and ⌥⌘H now
+    // dispatch unambiguously to a single, expected target.
     [searchMenu addItem:itemMod(@"Replace…", @selector(showReplacePanel:), @"h",
-                                NSEventModifierFlagCommand | NSEventModifierFlagOption)];
+                                NSEventModifierFlagCommand | NSEventModifierFlagShift)];
     [searchMenu addItem:item(@"Incremental Search", @selector(showIncrementalSearch:), @"i")];
     addSep(searchMenu);
     [searchMenu addItem:item(@"Search Results Window",  @selector(showSearchResultsWindow:), @"")];
@@ -714,6 +643,9 @@ static NSMenu *buildLanguageMenu() {
     // ── Navigation ──
     [tabViewMenu addItem:item(@"First Tab",    @selector(selectFirstTab:),    @"")];
     [tabViewMenu addItem:item(@"Last Tab",     @selector(selectLastTab:),     @"")];
+    // Match the Preferences > Tab Bar checkbox label so the existing
+    // localization entry (id=90224) translates this menu item too.
+    [tabViewMenu addItem:item(@"Wrap tabs to multiple lines", @selector(toggleTabBarWrap:), @"")];
     {
         unichar pgdn = NSPageDownFunctionKey;
         unichar pgup = NSPageUpFunctionKey;
@@ -816,13 +748,14 @@ static NSMenu *buildLanguageMenu() {
 
     // ── Language ──────────────────────────────────────────────────────────────
     NSMenuItem *langMenuTop = [[NSMenuItem alloc] init];
+    langMenuTop.tag = kMenuTagLanguage; // localization-stable lookup key
     [main addItem:langMenuTop];
     langMenuTop.submenu = buildLanguageMenu();
     langMenuTop.submenu.title = @"Language";
 
     // ── Macro ─────────────────────────────────────────────────────────────────
     NSMenuItem *macroItem = [[NSMenuItem alloc] init];
-    macroItem.tag = 9900; // used by rebuildMacroMenu to find this menu
+    macroItem.tag = kMenuTagMacro; // used by rebuildMacroMenu to find this menu
     [main addItem:macroItem];
     NSMenu *macroMenu = submenu(@"Macro");
     macroItem.submenu = macroMenu;
@@ -836,6 +769,7 @@ static NSMenu *buildLanguageMenu() {
     [macroMenu addItem:item(@"Save Current Recorded Macro…", @selector(saveCurrentMacro:), @"")];
     addSep(macroMenu);
     [macroMenu addItem:item(@"Run a Macro Multiple Times…", @selector(runMacroMultipleTimes:), @"")];
+    [macroMenu addItem:item(@"Run Macro on Files…", @selector(showBatchRunDialog:), @"")];
     addSep(macroMenu);
     {
         NSMenuItem *trimItem = item(@"Trim Trailing Space and Save", @selector(trimTrailingSpaceAndSave:), @"");
@@ -847,7 +781,7 @@ static NSMenu *buildLanguageMenu() {
 
     // ── Run ───────────────────────────────────────────────────────────────────
     NSMenuItem *runItem = [[NSMenuItem alloc] init];
-    runItem.tag = 9902; // used by rebuildRunMenu to find this menu
+    runItem.tag = kMenuTagRun; // used by rebuildRunMenu to find this menu
     [main addItem:runItem];
     NSMenu *runMenu = submenu(@"Run");
     runItem.submenu = runMenu;
@@ -860,6 +794,7 @@ static NSMenu *buildLanguageMenu() {
 
     // ── Plugins ───────────────────────────────────────────────────────────────
     NSMenuItem *pluginsItem = [[NSMenuItem alloc] init];
+    pluginsItem.tag = kMenuTagPlugins; // localization-stable lookup key
     [main addItem:pluginsItem];
     NSMenu *pluginsMenu = submenu(@"Plugins");
     pluginsItem.submenu = pluginsMenu;
@@ -945,10 +880,12 @@ static NSMenu *buildLanguageMenu() {
 
     [helpMenu addItem:item(@"Command Line Arguments…", @selector(showCLIHelp:), @"")];
     addSep(helpMenu);
-    [helpMenu addItem:item(@"Notepad++ macOS Home",              @selector(openNppHome:),        @"")];
-    [helpMenu addItem:item(@"Notepad++ macOS Project Page",      @selector(openNppProjectPage:), @"")];
-    [helpMenu addItem:item(@"Notepad++ Online User Manual",@selector(openNppManual:),      @"")];
-    [helpMenu addItem:item(@"Notepad++ Community (Forum)", @selector(openNppForum:),       @"")];
+    [helpMenu addItem:item(@"Nextpad++ macOS Home",              @selector(openNppHome:),        @"")];
+    [helpMenu addItem:item(@"Nextpad++ macOS Project Page",      @selector(openNppProjectPage:), @"")];
+    [helpMenu addItem:item(@"Online User Manual",@selector(openNppManual:),      @"")];
+    // Commented out — community forum URL not yet established for the
+    // rebranded project. Re-enable once a forum is set up.
+    // [helpMenu addItem:item(@"Nextpad++ Community (Forum)", @selector(openNppForum:),       @"")];
     addSep(helpMenu);
     [helpMenu addItem:item(@"Debug Info…", @selector(showDebugInfo:), @"")];
 }

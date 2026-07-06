@@ -136,7 +136,14 @@
                 return;
             }
             NSError *err;
-            [editor saveError:&err];
+            if (![editor saveError:&err]) {
+                // Save failed (read-only path, full disk, encoding-inapplicable, …).
+                // Surface the error and KEEP the tab — falling through to
+                // removeEditor: would silently destroy the user's unsaved changes
+                // even though they explicitly chose "Save".
+                [[NSAlert alertWithError:err] runModal];
+                return;
+            }
         } else if (resp == NSAlertThirdButtonReturn) {
             return;
         }
@@ -195,6 +202,25 @@
     // because each NppTabBar's delegate is the TabManager that owns it, so
     // we can never receive this for a bar that belongs to a different pane.
     [self addNewTab];
+}
+
+- (void)tabBar:(NppTabBar *)bar didMoveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex {
+    NSInteger count = (NSInteger)_editors.count;
+    if (fromIndex < 0 || fromIndex >= count ||
+        toIndex < 0 || toIndex >= count ||
+        fromIndex == toIndex) return;
+
+    EditorView *movingEditor = _editors[fromIndex];
+    [_editors removeObjectAtIndex:(NSUInteger)fromIndex];
+    [_editors insertObject:movingEditor atIndex:(NSUInteger)toIndex];
+
+    if (_selectedIndex == fromIndex) {
+        _selectedIndex = toIndex;
+    } else if (fromIndex < _selectedIndex && _selectedIndex <= toIndex) {
+        _selectedIndex--;
+    } else if (toIndex <= _selectedIndex && _selectedIndex < fromIndex) {
+        _selectedIndex++;
+    }
 }
 
 #pragma mark - Accessors
@@ -317,9 +343,13 @@
     [panel beginWithCompletionHandler:^(NSModalResponse result) {
         if (result == NSModalResponseOK) {
             NSError *err;
-            [editor saveToPath:panel.URL.path error:&err];
+            // Report the ACTUAL write result, not just that the panel was
+            // confirmed. completion(YES) tells the close path it may discard the
+            // buffer, so reporting success on a failed write loses the content.
+            BOOL saved = [editor saveToPath:panel.URL.path error:&err];
+            if (!saved) [[NSAlert alertWithError:err] runModal];
             [self refreshAllTabTitles];
-            if (completion) completion(YES);
+            if (completion) completion(saved);
         } else {
             if (completion) completion(NO);
         }

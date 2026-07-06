@@ -41,7 +41,7 @@
 					<Item subMenuId="edit-onSelection" name="A ki&amp;jelölt szövegrész alapján"/>
 					<Item subMenuId="edit-multiSelectALL" name="Többszörös ki&amp;jelölés az ÖSSZES egyezővel"/>
 					<Item subMenuId="edit-multiSelectNext" name="Többszörös ki&amp;jelölés a következő egyezővel"/>
-					<Item subMenuId="edit-readonlyInNotepad++" name="Csak olvashat&amp;ó a Notepad++-ban"/>
+					<Item subMenuId="edit-readonlyInNextpad++" name="Csak olvashat&amp;ó a Nextpad++-ban"/>
 					<Item subMenuId="search-changeHistory" name="Mó&amp;dosítási előzmények"/>
 					<Item subMenuId="search-markAll" name="Az ö&amp;sszes elem kiemelése"/>
 					<Item subMenuId="search-markOne" name="A jele&amp;nlegi elem kiemelése"/>
@@ -367,17 +367,17 @@
 					<Item id="46016" name="Nincs (hagyományos szöveg)"/>
 					<Item id="46250" name="&amp;Felhasználói nyelvek beállítása…"/>
 					<Item id="46300" name="&amp;A felhasználói nyelvek mappája…"/>
-					<Item id="46301" name="A &amp;Notepad++ felhasználóinyelv-gyűjteménye"/>
+					<Item id="46301" name="A &amp;Nextpad++ felhasználóinyelv-gyűjteménye"/>
 					<Item id="46180" name="Felhasználói nyelv"/>
-					<Item id="47000" name="A Notepad++ &amp;névjegye"/>
+					<Item id="47000" name="A Nextpad++ &amp;névjegye"/>
 					<Item id="47010" name="&amp;Parancssori paraméterek…"/>
-					<Item id="47001" name="A Notepad++ &amp;honlapja"/>
-					<Item id="47002" name="A Notepad++ p&amp;rojekt weboldala"/>
-					<Item id="47003" name="A Notepad++ &amp;online Felhasználói kézikönyve"/>
-					<Item id="47004" name="A Notepad++ &amp;közössége (fórum)"/>
+					<Item id="47001" name="A Nextpad++ &amp;honlapja"/>
+					<Item id="47002" name="A Nextpad++ p&amp;rojekt weboldala"/>
+					<Item id="47003" name="&amp;Online felhasználói kézikönyv"/>
+					<Item id="47004" name="A Nextpad++ &amp;közössége (fórum)"/>
 					<Item id="47012" name="H&amp;ibakeresési adatok…"/>
 					<Item id="47005" name="&amp;További bővítmények"/>
-					<Item id="47006" name="A Notepad++ &amp;frissítése"/>
+					<Item id="47006" name="A Nextpad++ &amp;frissítése"/>
 					<Item id="47009" name="A frissítés pro&amp;xybeállításai…"/>
 					<Item id="48005" name="&amp;Bővítmények importálása…"/>
 					<Item id="48006" name="&amp;Stílustémák importálása…"/>
@@ -446,7 +446,7 @@
 				<Item CMDID="41016" name="Lomtárba helyezés"/>
 				<Item CMDID="41014" name="Újratöltés"/>
 				<Item CMDID="41010" name="Nyomtatás…"/>
-				<Item CMDID="42028" name="Csak olvasható a Notepad++-ban"/>
+				<Item CMDID="42028" name="Csak olvasható a Nextpad++-ban"/>
 				<Item CMDID="42033" name="Csak olvasható attribútum a Windowsban"/>
 				<Item CMDID="2" name="Másolás a vágólapra"/>
 				<Item CMDID="42029" name="Teljes elérési út másolása"/>
@@ -1128,7 +1128,7 @@
 				</DefaultDir>
 
 				<FileAssoc title="Fájltársítások">
-					<Item id="4008" name="A beállításhoz, kérjük, zárja be a Notepad++-t, majd rendszergazdaként indítsa újra"/>
+					<Item id="4008" name="A beállításhoz, kérjük, zárja be a Nextpad++-t, majd rendszergazdaként indítsa újra"/>
 					<Item id="4009" name="&amp;Elérhető kiterjesztések:"/>
 					<Item id="4010" name="&amp;Társított kiterjesztések:"/>
 				</FileAssoc>
@@ -1213,7 +1213,7 @@
 				</Print>
 
 				<Searching title="Keresés">
-					<Item id="6902" name="&amp;Állandó szélességű betűtípus használata a „Keresés” panelben (Notepad++-újraindítást igényel)"/>
+					<Item id="6902" name="&amp;Állandó szélességű betűtípus használata a „Keresés” panelben (Nextpad++-újraindítást igényel)"/>
 					<Item id="6903" name="A „K&amp;eresés” panel megnyitva tartása a „Keresés eredményei” ablakba adott találatok esetén"/>
 					<Item id="6904" name="&amp;Megerősítés kérése a „Csere a megnyitott dokumentumokban” művelet végrehajtása előtt"/>
 					<Item id="6905" name="„&amp;Csere”: a következő előforduláshoz ugrás nélkül"/>
@@ -1277,11 +1277,11 @@
 				</AutoCompletion>
 
 				<MultiInstance title="Példányszámok és dátumok">
-					<Item id="6151" name="A Notepad++ többpéldányos beállításai *"/>
+					<Item id="6151" name="A Nextpad++ többpéldányos beállításai *"/>
 					<Item id="6152" name="M&amp;unkamenet-megnyitás új példányban (ill. automatikus -mentés kilépéskor)"/>
 					<Item id="6153" name="&amp;Mindig többpéldányos mód használata"/>
 					<Item id="6154" name="&amp;Alapértelmezett (egyetlen példány futtatása)"/>
-					<Item id="6155" name="* A módosítások érvénybe léptetéséhez a Notepad++ újraindítása szükséges"/>
+					<Item id="6155" name="* A módosítások érvénybe léptetéséhez a Nextpad++ újraindítása szükséges"/>
 					<Item id="6171" name="A dátum- és időbeillesztés testreszabása"/>
 					<Item id="6175" name="A &amp;dátum-idő sorrend megfordítása (rövid és hosszú formátumok esetén)"/>
 					<Item id="6172" name="&amp;Egyéni formátum:"/>
@@ -1364,8 +1364,8 @@
 					</ComboBox>
 					<ComboBox id="6364">
 						<Element name="Kikapcsolva"/>
-						<Element name="Engedélyezve Notepad++-indításkor"/>
-						<Element name="Engedélyezve Notepad++-bezáráskor"/>
+						<Element name="Engedélyezve Nextpad++-indításkor"/>
+						<Element name="Engedélyezve Nextpad++-bezáráskor"/>
 					</ComboBox>
 					<Item id="6308" name="az értesítési területre"/>
 					<Item id="6363" name="renderelési mód"/>
@@ -1620,6 +1620,7 @@ Ebben az esetben a „Gépház” párbeszédpanel „Egyéb” szakasza alatt k
 				<Item id="90160" name="Intelligens kiemelés: csak a teljes szó"/>
 				<Item id="90161" name="Kattintson duplán a lap bezárásához"/>
 				<Item id="90162" name="Bezárás gomb megjelenítése a lapokon"/>
+				<Item id="90224" name="Lapok megjelenítése több sorban"/>
 				<Item id="90163" name="Emlékezzen a panel láthatóságára a munkamenetek között"/>
 				<Item id="90164" name="Tartsa távol a fájlbejegyzéseket a munkamenetben"/>
 				<Item id="90165" name="Erősítse meg az összes mentése előtt"/>
@@ -1649,7 +1650,7 @@ Ebben az esetben a „Gépház” párbeszédpanel „Egyéb” szakasza alatt k
 				<Item id="90189" name="Windows (CRLF)"/>
 				<Item id="90190" name="Mac (CR)"/>
 				<Item id="90191" name="Beépülő modulok listája"/>
-				<Item id="90192" name="Válasszon ki egy Notepad++ téma XML-fájlt az alkalmazáshoz"/>
+				<Item id="90192" name="Válasszon ki egy Nextpad++ téma XML-fájlt az alkalmazáshoz"/>
 				<Item id="90193" name="Új létrehozása\u2026"/>
 				<Item id="90194" name="Mentés másként\u2026"/>
 				<Item id="90195" name="Felhasználói nyelv:"/>
@@ -1662,7 +1663,7 @@ Ebben az esetben a „Gépház” párbeszédpanel „Egyéb” szakasza alatt k
 				<Item id="90202" name="Érvénytelen tartomány"/>
 				<Item id="90203" name="A tartomány értékének 0 és 255 között kell lennie, a kezdetnek pedig &lt;= vége."/>
 				<Item id="90204" name="ContextMenu.xml Nem található"/>
-				<Item id="90205" name="Indítsa újra a Notepad++-t az alapértelmezett contextMenu.xml fájl újbóli létrehozásához."/>
+				<Item id="90205" name="Indítsa újra a Nextpad++-t az alapértelmezett contextMenu.xml fájl újbóli létrehozásához."/>
 				<Item id="90206" name="A fájl nem mentett módosításokat tartalmaz.Az új kódolással történő újratöltés elveti őket.Folytatja?"/>
 				<Item id="90207" name="Nincs válasz a szervertől."/>
 				<Item id="90208" name="A szerver állapota"/>
@@ -1685,8 +1686,8 @@ Ebben az esetben a „Gépház” párbeszédpanel „Egyéb” szakasza alatt k
 		</Dialog>
 		<MessageBox>
 			<!-- $INT_REPLACE$ is a place holder, don't translate it -->
-			<ContextMenuXmlEditWarning title="Felugró menü szerkesztése" message="A contextMenu.xml fájl szerkesztésével a Notepad++ helyi menüje módosítható.
-A fájl mentése után a módosítások érvénybe léptetéséhez a Notepad++ újraindítása szükséges."/>
+			<ContextMenuXmlEditWarning title="Felugró menü szerkesztése" message="A contextMenu.xml fájl szerkesztésével a Nextpad++ helyi menüje módosítható.
+A fájl mentése után a módosítások érvénybe léptetéséhez a Nextpad++ újraindítása szükséges."/>
 			<SaveCurrentModifWarning title="A módosítások mentése javasolt" message="Javasoljuk a jelenlegi módosítások mentését.
 Az elmentett módosítások nem vonhatók vissza.
 
@@ -1695,27 +1696,27 @@ Biztosan folytatja?"/><!-- HowToReproduce: when you openned file is modified but
 Az elmentett módosítások nem vonhatók vissza.
 
 Biztosan folytatja?"/><!-- HowToReproduce: when you openned file is modified and saved, then you are changing file encoding. -->
-			<CannotMoveDoc title="Áthelyezés új alkalmazáspéldányba" message="A dokumentum módosítva lett. Kérjük, mentse el, majd próbálja újra"/><!-- HowToReproduce: From your Notepad++ drag & drop a clean (not dirty) file to outside of Notepad++, another instance of Notepad++ will be created. Then from your first Notepad++ drag & drop an unsaved file to the new instance. -->
-			<DocReloadWarning title="A fájl újratöltése" message="Biztosan újratölti az aktuális fájlt? Ezzel elvesznek a Notepad++-ban végzett módosítások"/>
+			<CannotMoveDoc title="Áthelyezés új alkalmazáspéldányba" message="A dokumentum módosítva lett. Kérjük, mentse el, majd próbálja újra"/><!-- HowToReproduce: From your Nextpad++ drag & drop a clean (not dirty) file to outside of Nextpad++, another instance of Nextpad++ will be created. Then from your first Nextpad++ drag & drop an unsaved file to the new instance. -->
+			<DocReloadWarning title="A fájl újratöltése" message="Biztosan újratölti az aktuális fájlt? Ezzel elvesznek a Nextpad++-ban végzett módosítások"/>
 			<FileLockedWarning title="Sikertelen mentés" message="Kérjük, ellenőrizze, hogy a fájl nincs-e megnyitva másik alkalmazásban"/>
-			<FileAlreadyOpenedInNpp title="Sikertelen mentés" message="A fájl már meg van nyitva a Notepad++-ban"/><!-- HowToReproduce: Open a new document and open a file "c:/tmp/foo", save this new document by choosing "c:/tmp/foo" as file to save, reply the override popup "yes", then this message appears. -->
+			<FileAlreadyOpenedInNpp title="Sikertelen mentés" message="A fájl már meg van nyitva a Nextpad++-ban"/><!-- HowToReproduce: Open a new document and open a file "c:/tmp/foo", save this new document by choosing "c:/tmp/foo" as file to save, reply the override popup "yes", then this message appears. -->
 			<RenameTabTemporaryNameAlreadyInUse title="Sikertelen átnevezés" message="A megadott név már használatban van egy másik fülön"/><!-- HowToReproduce: Rename the tab of an untitled document and provide a name that is the same as an already-existing tab of an untitled document. -->
 			<RenameTabTemporaryNameIsEmpty title="Sikertelen átnevezés" message="A megadott név nem lehet üres, illetve nem tartalmazhat csak szóköz(öke)t vagy tabulátor(oka)t"/><!-- HowToReproduce: Rename the tab of an untitled document and provide an empty string or only some white speces. -->
 			<DeleteFileFailed title="Sikertelen törlés" message="A fájl törlése sikertelen"/><!-- HowToReproduce: this message prevents from system failure. It's hard to reproduce. -->
 
 			<NbFileToOpenImportantWarning title="Nagy mennyiségű fájl megnyitása" message="$INT_REPLACE$ fájlt szeretne megnyitni.
-Biztosan megnyitja mindet?"/><!-- HowToReproduce: Check "Open all files of folder instead of launching Folder as Workspace on folder dropping" in "Default Directory" of Preferences dialog, then drop a folder which contains more then 200 files into Notepad++. -->
+Biztosan megnyitja mindet?"/><!-- HowToReproduce: Check "Open all files of folder instead of launching Folder as Workspace on folder dropping" in "Default Directory" of Preferences dialog, then drop a folder which contains more then 200 files into Nextpad++. -->
 			<SettingsOnCloudError title="Beállítások tárolása felhőben" message="Úgy tűnik, a felhőtárhely helyi elérési útja írásvédett meghajtóra mutat,
 vagy pedig a megadott mappához írási jogosultság szükséges.
 A felhőben tárolandó beállításai törlődnek. Kérjük, állítson be megfelelő értéket a „Gépház”-ban"/>
 			<FilePathNotFoundWarning title="Fájl megnyitása" message="A megnyitni kívánt fájl nem létezik"/><!-- HowToReproduce: this message prevents from system failure. It's hard to reproduce. -->
 			<SessionFileInvalidError title="Sikertelen munkamenet-betöltés" message="A munkamenetfájl sérült vagy érvénytelen"/><!-- HowToReproduce: Save current session via menu "File -> Save Session...", use another editor to modify the session you saved to make it an invalid xml file. Then load this invalid session via menu "File -> Load Session...". -->
-			<DroppingFolderAsProjectModeWarning title="Érvénytelen művelet" message="A Notepad++-ra vagy csak fájlokat, vagy csak mappákat ejthet (mindkettőt nem), mivel a „fogd és vidd” műveletre projektmód van beállítva.
+			<DroppingFolderAsProjectModeWarning title="Érvénytelen művelet" message="A Nextpad++-ra vagy csak fájlokat, vagy csak mappákat ejthet (mindkettőt nem), mivel a „fogd és vidd” műveletre projektmód van beállítva.
 A művelet végrehajtásához a „Gépház” párbeszédpanel „Alapértelmezett mappa” szakaszában az „Egy mappa »fogd és vidd« ejtésekor a fájlok megnyitása…” lehetőség engedélyezése szükséges"/>
 			<SortingError title="Rendezési hiba" message="Nem hajtható végre számszerű rendezés a(z) $INT_REPLACE$. sor miatt"/><!-- HowToReproduce: this message prevents from system failure. It's hard to reproduce. -->
 			<SortLocaleMultiple title="Nem történt rendezés" message="Nem támogatott a többszörös kijelöléssel történő rendezés"/><!-- HowToReproduce: Make a multiple selection and choose Edit | Line Operations | Sort Lines In Locale Order. -->
 			<SortLocaleUnknown title="Sikertelen rendezés" message="Sajnos nem sikerült megállapítani a rendezés sikertelenségének okát"/><!-- HowToReproduce: This condition is theoretical; it is unknown what could cause it. -->
-			<SortLocaleExcept title="Sikertelen rendezés" message="$STR_REPLACE$"/><!-- HowToReproduce: Open a large file, e.g. 500MB / 90k lines, in 32-bit Notepad++ and choose Edit | Line Operations | Sort Lines In Locale Order. -->
+			<SortLocaleExcept title="Sikertelen rendezés" message="$STR_REPLACE$"/><!-- HowToReproduce: Open a large file, e.g. 500MB / 90k lines, in 32-bit Nextpad++ and choose Edit | Line Operations | Sort Lines In Locale Order. -->
 			<ColumnModeTip title="Javaslatok az oszlopos kijelöléshez" message="Háromféle módon használhatja az oszlopos kijelölést:
 
 1. Billentyűzettel és egérrel: tartsa nyomva az Altot, majd az egér bal gombját lenyomva indítson kijelölést
@@ -1734,7 +1735,7 @@ Megtartja a fájlt a szerkesztőben?"/>
 			<DoDeleteOrNot title="Fájl törlése" message="A(z) „$STR_REPLACE$” fájl
 át lesz helyezve a Lomtárba, ez a dokumentum pedig bezáródik.
 Biztosan folytatja?"/>
-			<NoBackupDoSaveFile title="Mentés" message="A biztonságimentés-fájl nem található (Notepad++-on kívülről törölve).
+			<NoBackupDoSaveFile title="Mentés" message="A biztonságimentés-fájl nem található (Nextpad++-on kívülről törölve).
 Mentés nélkül az adatok el fognak veszni.
 El szeretné menteni a(z) „$STR_REPLACE$” fájlt?"/>
 			<DoReloadOrNot title="Újratöltés" message="„$STR_REPLACE$”
@@ -1744,14 +1745,14 @@ Szeretné újratölteni?"/>
 			<DoReloadOrNotAndLooseChange title="Újratöltés" message="„$STR_REPLACE$”
 
 Ezt a fájlt módosította egy másik alkalmazás.
-Szeretné újratölteni, és elvetni a Notepad++-ban végzett módosításokat?"/>
+Szeretné újratölteni, és elvetni a Nextpad++-ban végzett módosításokat?"/>
 			<PrehistoricSystemDetected title="Őskori rendszer észlelve" message="Úgy tűnik, hogy még mindig egy őskori rendszert használ. Sajnáljuk, de ez a funkció csak modern operációs rendszereken működik."/><!-- HowToReproduce: Launch "Document Map" under Windows XP. -->
-			<XpUpdaterProblem title="Notepad++-frissítés" message="A Notepad++ frissítőrendszere (a Windows XP elavult biztonsági rétege miatt) nem kompatibilis az XP-vel.
-Meglátogatja a Notepad++ weboldalát a legújabb verzió letöltéséhez?"/><!-- HowToReproduce: Run menu "? -> Update Notepad++" under Windows XP. -->
-			<GUpProxyConfNeedAdminMode title="Proxybeállítások" message="A proxybeállításokhoz, kérjük, rendszergazdaként indítsa újra a Notepad++-t"/>
+			<XpUpdaterProblem title="Nextpad++-frissítés" message="A Nextpad++ frissítőrendszere (a Windows XP elavult biztonsági rétege miatt) nem kompatibilis az XP-vel.
+Meglátogatja a Nextpad++ weboldalát a legújabb verzió letöltéséhez?"/><!-- HowToReproduce: Run menu "? -> Update Nextpad++" under Windows XP. -->
+			<GUpProxyConfNeedAdminMode title="Proxybeállítások" message="A proxybeállításokhoz, kérjük, rendszergazdaként indítsa újra a Nextpad++-t"/>
 			<DocTooDirtyToMonitor title="Fájlfelügyeleti probléma" message="A dokumentum módosítva lett. Kérjük, mentse el a módosításokat, mielőtt felügyeli a fájlt"/>
 			<DocNoExistToMonitor title="Fájlfelügyeleti probléma" message="A fájl felügyeletéhez léteznie kell annak"/>
-			<FileTooBigToOpen title="Fájlméretprobléma" message="A fájl túl nagy ahhoz, hogy a Notepad++ megnyithassa azt"/><!-- HowToReproduce: Try to open a 4GB file (it's not easy to reproduce, it depends on your system). -->
+			<FileTooBigToOpen title="Fájlméretprobléma" message="A fájl túl nagy ahhoz, hogy a Nextpad++ megnyithassa azt"/><!-- HowToReproduce: Try to open a 4GB file (it's not easy to reproduce, it depends on your system). -->
 			<FileLoadingException title="Kivétel hibakódja: $STR_REPLACE$" message="Hiba történt a fájl betöltésekor!"/>
 			<WantToOpenHugeFile title="Figyelmeztetés nagyméretű fájl megnyitására" message="Egy 2 GB-nál is nagyobb fájl megnyitása több percbe is telhet.
 Biztosan megnyitja?"/>
@@ -1765,8 +1766,8 @@ A(z) „$STR_REPLACE2$” mappa nem létezik"/>
 Mindenesetre el szeretné menteni a jelenlegi fájlt?"/><!-- HowToReproduce: this message prevents from system failure. It's hard to reproduce. -->
 			<LoadStylersFailed title="A stylers.xml betöltése sikertelen" message="A(z) „$STR_REPLACE$” betöltése nem sikerült!"/>
 			<LoadLangsFailed title="Beállításkezelő" message="Nem sikerült a langs.xml betöltése!
-Helyre szeretné állítani a langs.xml fájlt?"/><!-- HowToReproduce: Close Notepad++. Use another editor to make "langs.xml" an invalid xml file then save it. Open Notepad++. -->
-			<LoadLangsFailedFinal title="Beállításkezelő" message="Nem sikerült a langs.xml betöltése!"/><!-- HowToReproduce: Close Notepad++. Use another editor to make "langs.xml" an invalid xml file then save it. Open Notepad++. -->
+Helyre szeretné állítani a langs.xml fájlt?"/><!-- HowToReproduce: Close Nextpad++. Use another editor to make "langs.xml" an invalid xml file then save it. Open Nextpad++. -->
+			<LoadLangsFailedFinal title="Beállításkezelő" message="Nem sikerült a langs.xml betöltése!"/><!-- HowToReproduce: Close Nextpad++. Use another editor to make "langs.xml" an invalid xml file then save it. Open Nextpad++. -->
 			<FolderAsWorspaceSubfolderExists title="Probléma mappa hozzáadásakor a „Mappa mint munkaterület”-hez" message="A hozzáadni kívánt könyvtárnak már létezik itt almappája.
 Kérjük, távolítsa el a panelről az almappát, mielőtt hozzáadja a következő könyvtárat: „$STR_REPLACE$”"/><!-- HowToReproduce: Add a folder like "c:\temp\aFolder\" into "Folder as Workspace" panel, then try to add "c:\temp\". -->
 
@@ -1794,28 +1795,28 @@ kérjük, adjon meg más elnevezést"/>
 			<SCMapperDoDeleteOrNot title="Billentyűparancs" message="Biztosan eltávolítja ezt a billentyűparancsot?"/>
 			<FindCharRangeValueError title="Értéktartomány-probléma" message="Kérjük, egy 0 és 255 közötti értéket adjon meg"/> <!-- HowToReproduce: Search menu, then Find characters in range, select Custom range, enter 999 in either edit box, press Find. -->
 			<OpenInAdminMode title="Sikertelen mentés" message="A fájl mentése sikertelen volt; lehet, hogy védett.
-El szeretné indítani a Notepad++-t rendszergazdaként?"/>
+El szeretné indítani a Nextpad++-t rendszergazdaként?"/>
 			<OpenInAdminModeWithoutCloseCurrent title="Sikertelen mentés" message="A fájl mentése sikertelen volt; lehet, hogy védett.
-El szeretné indítani a Notepad++-t rendszergazdaként?"/>
-			<OpenInAdminModeFailed title="A rendszergazdaként futtatás sikertelen" message="A Notepad++ nem futtatható rendszergazdaként."/><!-- HowToReproduce: When you have no Admin privilege and you try to save a modified file in a protected location (for example: any file in sub-folder of "C:\Program Files\". This message will appear after replying "Yes" to "Open in Admin mode" dialog. -->
+El szeretné indítani a Nextpad++-t rendszergazdaként?"/>
+			<OpenInAdminModeFailed title="A rendszergazdaként futtatás sikertelen" message="A Nextpad++ nem futtatható rendszergazdaként."/><!-- HowToReproduce: When you have no Admin privilege and you try to save a modified file in a protected location (for example: any file in sub-folder of "C:\Program Files\". This message will appear after replying "Yes" to "Open in Admin mode" dialog. -->
 			<ViewInBrowser title="A jelenlegi fájl megnyitása böngészőben" message="Az alkalmazás nem található a rendszerben"/>
-			<ExitToUpdatePlugins title="A Notepad++ bezárása következik" message="Ha az IGEN-re kattint, a műveletek folytatásához Ön kilép a Notepad++-ból.
-A műveletek elvégzése után a Notepad++ újraindul.
+			<ExitToUpdatePlugins title="A Nextpad++ bezárása következik" message="Ha az IGEN-re kattint, a műveletek folytatásához Ön kilép a Nextpad++-ból.
+A műveletek elvégzése után a Nextpad++ újraindul.
 Szeretné folytatni?"/>
-			<NeedToRestartToLoadPlugins title="A Notepad++ újraindítást igényel" message="A telepített bővítmények betöltéséhez a Notepad++ újraindítása szükséges"/><!-- HowToReproduce: Import a plugin via menu "Settings->Import->Import Plugin(s)...". -->
-			<ChangeHistoryEnabledWarning title="A Notepad++ újraindítást igényel" message="A változáselőzmények megjelenítéséhez a Notepad++ újraindítása szükséges"/><!-- HowToReproduce: uncheck "Display Change History" via Preferences dialog "Marges/Border/Edge. -->
-			<WindowsSessionExit title="Notepad++ - kilépés a Windows-munkamenetből" message="A Windows-munkamenet hamarosan leáll, de néhány adat nincs mentve. Szeretne most kilépni a Notepad++ alkalmazásból?"/>
+			<NeedToRestartToLoadPlugins title="A Nextpad++ újraindítást igényel" message="A telepített bővítmények betöltéséhez a Nextpad++ újraindítása szükséges"/><!-- HowToReproduce: Import a plugin via menu "Settings->Import->Import Plugin(s)...". -->
+			<ChangeHistoryEnabledWarning title="A Nextpad++ újraindítást igényel" message="A változáselőzmények megjelenítéséhez a Nextpad++ újraindítása szükséges"/><!-- HowToReproduce: uncheck "Display Change History" via Preferences dialog "Marges/Border/Edge. -->
+			<WindowsSessionExit title="Nextpad++ - kilépés a Windows-munkamenetből" message="A Windows-munkamenet hamarosan leáll, de néhány adat nincs mentve. Szeretne most kilépni a Nextpad++ alkalmazásból?"/>
 			<LanguageMenuCompactWarning title="Kompakt „Nyelv” menü" message="Ez a beállítás a következő indításkor lép érvénybe"/><!-- HowToReproduce: toggle "Make language menu compact" via Preferences dialog "Language/Language Menu. -->
 			<SwitchUnsavedThemeWarning title="A(z) „$STR_REPLACE$” stílus módosítása" message="A nem mentett módosítások el lesznek vetve!
 Szeretné menteni a módosításokat témaváltás előtt?"/><!-- HowToReproduce: In the Style Configurator dialog change some theme and switch to other theme without saving. -->
-			<MacroAndRunCmdlWarning title="Kompatibilitás: „Makrók” és „Programok (Parancsok) futtatása”" message="Előfordulhat, hogy a Notepad++ 8.5.2-es (vagy régebbi) verziójával mentett, „Makrók” és „Programok (Parancsok) futtatása” alatti műveletek nem kompatibilisek a Notepad++ jelenlegi verziójával.
+			<MacroAndRunCmdlWarning title="Kompatibilitás: „Makrók” és „Programok (Parancsok) futtatása”" message="Előfordulhat, hogy a Nextpad++ 8.5.2-es (vagy régebbi) verziójával mentett, „Makrók” és „Programok (Parancsok) futtatása” alatti műveletek nem kompatibilisek a Nextpad++ jelenlegi verziójával.
 Kérjük, tesztelje ezeket a parancsokat, és ha szükséges, szerkessze újra őket.
 
-Alternatív megoldásként visszaválthat Notepad++ v8.5.2-re, és visszaállíthatja a korábbi adatokat.
-A Notepad++ biztonsági másolatot készít a régi „shortcuts.xml” fájlról, és elmenti azt „shortcuts.xml.v8.5.2.backup” néven.
-Egy „shortcuts.xml.v8.5.2.backup” » „shortcuts.xml” átnevezéssel a parancsokat sikeresen vissza kell tudnia állítani, és azoknak megfelelően működniük kell."/><!-- HowToReproduce: Close Notepad++, remove shortcuts.xml.v8.5.2.backup & v852ShortcutsCompatibilityWarning.xml if present, relaunch Notepad++, delete or modify a shortcuts via Shortcut Mapper, close Notepad++, then the message will show up -->
+Alternatív megoldásként visszaválthat Nextpad++ v8.5.2-re, és visszaállíthatja a korábbi adatokat.
+A Nextpad++ biztonsági másolatot készít a régi „shortcuts.xml” fájlról, és elmenti azt „shortcuts.xml.v8.5.2.backup” néven.
+Egy „shortcuts.xml.v8.5.2.backup” » „shortcuts.xml” átnevezéssel a parancsokat sikeresen vissza kell tudnia állítani, és azoknak megfelelően működniük kell."/><!-- HowToReproduce: Close Nextpad++, remove shortcuts.xml.v8.5.2.backup & v852ShortcutsCompatibilityWarning.xml if present, relaunch Nextpad++, delete or modify a shortcuts via Shortcut Mapper, close Nextpad++, then the message will show up -->
 			<FullReadOnlySavingForbidden title="Sikertelen mentés" message="Nem menthető el a fájl.
-A Notepad++ az összes dokumentumot csak olvashatóként kezeli, ami megakadályozza a fájl mentését"/>
+A Nextpad++ az összes dokumentumot csak olvashatóként kezeli, ami megakadályozza a fájl mentését"/>
 			<NotEnoughRoom4Saving title="Sikertelen mentés" message="Nem sikerült menteni a fájlt.
 Úgy tűnik, nincs elég hely a lemezen a fájl mentéséhez. A fájl nem lett elmentve."/>
 			<FileInaccessibleUserSession title="A fájl(ok) elérése sikertelen" message="Nem érhető el egy vagy több fájl a kézzel mentett munkamenetben: „$STR_REPLACE$”. Ezek ugyanakkor megnyithatók helykitöltő üres és csak olvasható dokumentumokként.
@@ -1828,8 +1829,8 @@ MEGJEGYZÉS: ha úgy dönt, hogy nem hoz létre helykitöltő dokumentumokat, es
 Létre szeretné hozni ezeket a helykitöltőket?
 
 MEGJEGYZÉS: ha úgy dönt, hogy nem hoz létre helykitöltő dokumentumokat, esetleg később bezárja őket, munkamenete MÓDOSÍTVA LESZ KILÉPÉSKOR! Javasoljuk, hogy mielőbb készítsen biztonsági mentést a „session.xml” fájlról."/>
-			<RTLvsDirectWrite title="Nem használható a „jobbról balra” szövegirány" message="A „jobbról balra” (RTL) szövegirány nem kompatibilis a DirectWrite móddal. Kérjük, kapcsolja ki a DirectWrite-ot a „Gépház” párbeszédpanel „Egyéb” szakaszában, és indítsa újra a Notepad++-t."/>
-			<FileMemoryAllocationFailed title="Kivétel: sikertelen memóriakiosztás a fájloknak" message="Valószínűleg nincs elegendő szabad memória a Notepad++ által betöltendő fájlok számára."/><!-- HowToReproduce: Try to open multiple files with total size > ~700MB in the x86 Notepad++ (it will depend on the PC memory configuration and the current system memory usage...). -->
+			<RTLvsDirectWrite title="Nem használható a „jobbról balra” szövegirány" message="A „jobbról balra” (RTL) szövegirány nem kompatibilis a DirectWrite móddal. Kérjük, kapcsolja ki a DirectWrite-ot a „Gépház” párbeszédpanel „Egyéb” szakaszában, és indítsa újra a Nextpad++-t."/>
+			<FileMemoryAllocationFailed title="Kivétel: sikertelen memóriakiosztás a fájloknak" message="Valószínűleg nincs elegendő szabad memória a Nextpad++ által betöltendő fájlok számára."/><!-- HowToReproduce: Try to open multiple files with total size > ~700MB in the x86 Nextpad++ (it will depend on the PC memory configuration and the current system memory usage...). -->
 			<FindRegexBackwardDisabled title="Reguláris kifejezéssel nem használható a visszafelé történő keresés" message="A feltételezhető váratlan eredmények miatt alapértelmezetten nem érhető el a reguláris visszafelé keresés. Visszafelé történő kereséshez a „Keresés” párbeszédpanelt megnyitva válassza a „Hagyományos” vagy a „Kiterjesztett” keresési módot a „Reguláris kifejezés” lehetőség helyett.
 Nyomja meg az OK gombot a „Keresés” párbeszédpanel megnyitásához vagy aktívvá tételéhez.
 
@@ -1837,8 +1838,8 @@ Ha szüksége van a visszafelé történő reguláris keresésre, a Felhasznál�
 			<PrintError title="0" message="Nem indítható el a dokumentum nyomtatása"/><!-- Use title="0" to use Windows OS default translated "Error" title. -->
 			<FindAutoChangeOfInSelectionWarning title="Keresési figyelmeztetés" message="Az „A kijelölésben” jelölőnégyzet állapota automatikusan módosítva lett.
 Kérjük, a művelet végrehajtása előtt ellenőrizze a keresési feltételeket"/> <!-- HowToReproduce: https://github.com/notepad-plus-plus/notepad-plus-plus/issues/14897#issuecomment-2564316224 -->
-			<Need2Restart2ShowMenuShortcuts title="A Notepad++ újraindítása szükséges" message="Újra kell indítani a Notepad++-t a jobb oldali parancsikonok megjelenítéséhez"/>
-			<NoAdminRight2ChangeReadOnlyFileAttribute title="A fájl csak olvasható attribútumának megváltoztatása sikertelen" message="Kérjük, futtassa a Notepad++-t rendszergazdaként a fájl attribútumának módosításához"/>
+			<Need2Restart2ShowMenuShortcuts title="A Nextpad++ újraindítása szükséges" message="Újra kell indítani a Nextpad++-t a jobb oldali parancsikonok megjelenítéséhez"/>
+			<NoAdminRight2ChangeReadOnlyFileAttribute title="A fájl csak olvasható attribútumának megváltoztatása sikertelen" message="Kérjük, futtassa a Nextpad++-t rendszergazdaként a fájl attribútumának módosításához"/>
 		</MessageBox>
 		<ClipboardHistory>
 			<PanelTitle name="Vágólap-előzmények"/>
@@ -1947,7 +1948,7 @@ Kérjük, a művelet végrehajtása előtt ellenőrizze a keresési feltételeke
 		</ProjectManager>
 		<MiscStrings>
 			<!-- $INT_REPLACE$  and $STR_REPLACE$ are a place holders, don't translate these place holders -->
-			<word-chars-list-tip value="A beállítás lehetővé teszi, hogy az aktuális szóegységkarakterek mellé további karaktereket vegyen fel, melyeket a Notepad++ dupla kattintással történő kijelölés, ill. keresés esetén (ha a „Teljes szóegyezés” be van jelölve) egyetlen szó részeiként vesz figyelembe"/><!-- HowToReproduce: In "Delimiter" section of Preferences dialog, hover your mouse on the "?" button. -->
+			<word-chars-list-tip value="A beállítás lehetővé teszi, hogy az aktuális szóegységkarakterek mellé további karaktereket vegyen fel, melyeket a Nextpad++ dupla kattintással történő kijelölés, ill. keresés esetén (ha a „Teljes szóegyezés” be van jelölve) egyetlen szó részeiként vesz figyelembe"/><!-- HowToReproduce: In "Delimiter" section of Preferences dialog, hover your mouse on the "?" button. -->
 
 			<!-- Don't translate "(&quot;EOL custom color&quot;)" -->
 			<eol-custom-color-tip value="Ugrás a „Stílusbeállítások” párbeszédpanelhez a sorvégződések alapértelmezett egyéni színeinek („EOL custom color”) beállításához"/>
@@ -1958,8 +1959,8 @@ Kérjük, a művelet végrehajtása előtt ellenőrizze a keresési feltételeke
 			<word-chars-list-warning-end value=" (is) tartalmaz!"/><!-- HowToReproduce: In "Delimiter" section of Preferences dialog, check "Add your character as part of word\r(don't choose it unless you know what you're doing)", then type a white-space in the text field. -->
 			<backup-select-folder value="A biztonsági mentések mappája"/><!-- HowToReproduce: Settings > Preferences > Backup > [...] -->
 			<cloud-invalid-warning value="Kérjük, adjon meg érvényes elérési utat"/>
-			<cloud-restart-warning value="Kérjük, az érvénybe léptetéshez ne felejtse újraindítani a Notepad++-t"/>
-			<cloud-select-folder value="Mappa kiválasztása a Notepad++ beállításainak tárolásához"/><!-- HowToReproduce: In "Cloud" section of Preferences dialog, check "Set your cloud location path here: ", then click the button "...". This message is displayed in the "Browse For Folder" dialog. -->
+			<cloud-restart-warning value="Kérjük, az érvénybe léptetéshez ne felejtse újraindítani a Nextpad++-t"/>
+			<cloud-select-folder value="Mappa kiválasztása a Nextpad++ beállításainak tárolásához"/><!-- HowToReproduce: In "Cloud" section of Preferences dialog, check "Set your cloud location path here: ", then click the button "...". This message is displayed in the "Browse For Folder" dialog. -->
 			<default-open-save-select-folder value="Alapértelmezett mappa kiválasztása"/><!-- HowToReproduce: Settings > Preferences > Default Directory > [...] -->
 			<shift-change-direction-tip value="Shift + Enter billentyűkombinációval az ellenkező irányban kereshet"/>
 			<two-find-buttons-tip value="Kétgombos keresés"/>
@@ -2118,7 +2119,7 @@ Ha a „Haladó szintű” módot választja, de nem a fenti nyelvek fájljait s
 
 			<!-- Don't translate "Global override" and "Default Style" -->
 			<global-override-tip value="A „Global override”-lehetőségek itt történő bekapcsolása minden nyelv stílusát felülírja az adott beállítással. Ha bizonytalan, valószínűleg a „Default Style” beállításait szeretné használni"/>
-			<scintillaRenderingTechnology-tip value="Javíthatja a különleges karakterek megjelenítését, vagy megoldhat egyes grafikai problémákat – a módosítások érvénybe léptetéséhez a Notepad++ újraindítása szükséges"/>
+			<scintillaRenderingTechnology-tip value="Javíthatja a különleges karakterek megjelenítését, vagy megoldhat egyes grafikai problémákat – a módosítások érvénybe léptetéséhez a Nextpad++ újraindítása szükséges"/>
 
 			<!-- Due to the limited space on the status bar, if the translations for 'length' & 'lines' are much longer than the English words, please leave them in English instead of translating them. -->
 			<statusbar-length-lines value="Hossz: $STR_REPLACE1$    Sorok: $STR_REPLACE2$"/>
