@@ -136,7 +136,6 @@ static NSMenu *buildLanguageMenu() {
         ? @"Settings…" : @"Preferences…";
     [appMenu addItem:item(prefsTitle, @selector(showPreferences:), @",")];
     addSep(appMenu);
-    [appMenu addItemWithTitle:@"Hide Notepad++" action:@selector(hide:) keyEquivalent:@"h"];
     [appMenu addItemWithTitle:@"Hide Nextpad++" action:@selector(hide:) keyEquivalent:@"h"];
     NSMenuItem *hideOthers = [appMenu addItemWithTitle:@"Hide Others" action:@selector(hideOtherApplications:) keyEquivalent:@"h"];
     hideOthers.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
